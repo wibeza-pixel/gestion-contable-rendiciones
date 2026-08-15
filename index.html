@@ -35,6 +35,10 @@
   nav.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #24445A;overflow-x:auto;}
   nav.tabs button{background:transparent;border:none;color:#B9C6CC;padding:12px 16px;font-family:var(--sans);font-size:13.5px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;}
   nav.tabs button.active{color:#fff;border-bottom:3px solid var(--teal);}
+  .indic-bar{background:#0F2231;color:#B9C6CC;padding:8px 28px;font-family:var(--mono);font-size:12px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;border-top:1px solid #1D3B4E;}
+  .indic-bar b{color:#6FC7AE;font-family:var(--sans);font-weight:600;margin-right:4px;}
+  .indic-bar .upd{margin-left:auto;background:transparent;border:1px solid #3A5A6C;color:#B9C6CC;padding:3px 10px;border-radius:14px;font-family:var(--sans);font-size:11px;cursor:pointer;}
+  .indic-bar .upd:hover{background:#1D3B4E;}
   main{max-width:1180px;margin:0 auto;padding:26px 24px 60px;}
   .panel{display:none;}
   .panel.active{display:block;}
@@ -123,7 +127,8 @@
     #panel-compras, #panel-ventas, #panel-fondos{display:none !important;}
     #panel-reportes{display:block !important;}
     #reportes-header{display:none;}
-    #reporte-compras, #reporte-ventas, #reporte-fondos{display:none;}
+    #reporte-f29, #reporte-compras, #reporte-ventas, #reporte-fondos{display:none;}
+    body.print-only-f29 #reporte-f29{display:block !important;}
     body.print-only-compras #reporte-compras{display:block !important;}
     body.print-only-ventas #reporte-ventas{display:block !important;}
     body.print-only-fondos #reporte-fondos{display:block !important;}
@@ -163,12 +168,15 @@
     <button class="tab-btn" data-tab="reportes" onclick="switchTab('reportes')">Reportes</button>
   </nav>
 
+  <div class="indic-bar no-print" id="indicBar"></div>
+
   <main>
     <div class="panel active" id="panel-compras"></div>
     <div class="panel" id="panel-ventas"></div>
     <div class="panel" id="panel-fondos"></div>
     <div class="panel" id="panel-reportes">
       <div class="card" id="reportes-header"><h2>Reportes</h2><div class="sub">Estado de conciliación y rendiciones. Exporta a Excel o imprime como PDF.</div></div>
+      <div id="reporte-f29"></div>
       <div id="reporte-compras"></div>
       <div id="reporte-ventas"></div>
       <div id="reporte-fondos"></div>
@@ -248,6 +256,16 @@
   <div class="map-field"><label>Glosa</label><input type="text" id="gGlosa" style="width:100%;"></div>
   <div class="map-field"><label>Foto / PDF documento</label><input type="file" id="gArchivo" accept="image/*,.pdf" style="width:100%;"></div>
   <div class="modal-actions"><button class="btn" onclick="closeModal('gastoModal')">Cancelar</button><button class="btn-primary" id="gastoConfirm">Guardar gasto</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="indicModal"><div class="modal" style="max-width:420px;">
+  <h3>Actualizar valores del día</h3>
+  <div class="sub" id="indicModalSub">Se intentó obtener los valores automáticamente desde el SII. Si no llegaron, ingrésalos manualmente.</div>
+  <div class="map-field"><label>Fecha</label><input type="date" id="indFecha" style="width:100%;"></div>
+  <div class="map-field"><label>Dólar observado</label><input type="number" id="indDolar" step="0.01" style="width:100%;"></div>
+  <div class="map-field"><label>UF</label><input type="number" id="indUf" step="0.01" style="width:100%;"></div>
+  <div class="map-field"><label>UTM</label><input type="number" id="indUtm" step="0.01" style="width:100%;"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('indicModal')">Cancelar</button><button class="btn-primary" id="indConfirm">Guardar</button></div>
 </div></div>
 
 <script>
@@ -442,7 +460,83 @@ async function enterApp(){
   badge.innerHTML = `<span class="role ${session.role}">${session.role==='office'?'Oficina':'Cliente'}</span> ${escapeHtml(session.clientName)}`;
   document.getElementById('switchClientBtn').style.display = session.role==='office' ? 'inline-block':'none';
   await loadClientData();
+  await loadIndicadores();
   renderAll();
+  renderIndicBar();
+}
+
+/* ============================================================
+   INDICADORES ECONÓMICOS (Dólar, UF, UTM)
+   ============================================================ */
+let indicadores = null;
+async function loadIndicadores(){
+  const { data } = await sb.from('indicadores').select('*').order('updated_at', {ascending:false}).limit(1);
+  indicadores = (data && data[0]) || null;
+}
+function renderIndicBar(){
+  const bar = document.getElementById('indicBar');
+  if (!bar) return;
+  const isOffice = session.role==='office';
+  if (!indicadores){
+    bar.innerHTML = `<span>Sin valores del día registrados.</span>${isOffice?`<button class="upd" onclick="openIndicModal()">Cargar valores</button>`:''}`;
+    return;
+  }
+  bar.innerHTML = `
+    <span><b>Dólar</b>${formatCLP(indicadores.dolar)}</span>
+    <span><b>UF</b>${formatCLP(indicadores.uf)}</span>
+    <span><b>UTM</b>${formatCLP(indicadores.utm)}</span>
+    <span style="color:#7A8E97;">al ${indicadores.fecha}</span>
+    ${isOffice?`<button class="upd" onclick="openIndicModal()">Actualizar</button>`:''}
+  `;
+}
+async function fetchSIIIndicadores(){
+  try{
+    const res = await fetch('https://zeus.sii.cl/admin/rss/sii_ind_rss.xml');
+    if (!res.ok) return null;
+    const text = await res.text();
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    const items = Array.from(doc.querySelectorAll('item'));
+    const result = {};
+    items.forEach(it=>{
+      const title = (it.querySelector('title')?.textContent||'').toUpperCase();
+      const desc = it.querySelector('description')?.textContent||'';
+      const m = desc.match(/\$\s*([\d.,]+)/);
+      const val = m ? parseMonto(m[1]) : null;
+      if (val===null) return;
+      if (title.includes('DOLAR')) result.dolar = val;
+      else if (title.includes('U.F.')) result.uf = val;
+      else if (title.includes('U.T.M')) result.utm = val;
+    });
+    return Object.keys(result).length ? result : null;
+  }catch(e){ return null; }
+}
+async function openIndicModal(){
+  if (!requireOffice()) return;
+  document.getElementById('indFecha').value = new Date().toISOString().slice(0,10);
+  document.getElementById('indDolar').value = indicadores?.dolar || '';
+  document.getElementById('indUf').value = indicadores?.uf || '';
+  document.getElementById('indUtm').value = indicadores?.utm || '';
+  document.getElementById('indicModalSub').textContent = 'Intentando obtener los valores automáticamente desde el SII...';
+  document.getElementById('indicModal').classList.remove('hidden');
+  const auto = await fetchSIIIndicadores();
+  if (auto){
+    if (auto.dolar!==undefined) document.getElementById('indDolar').value = auto.dolar;
+    if (auto.uf!==undefined) document.getElementById('indUf').value = auto.uf;
+    if (auto.utm!==undefined) document.getElementById('indUtm').value = auto.utm;
+    document.getElementById('indicModalSub').textContent = 'Valores obtenidos automáticamente del SII. Revisa y guarda.';
+  } else {
+    document.getElementById('indicModalSub').textContent = 'No se pudo obtener automáticamente (el navegador bloqueó la conexión al SII). Ingresa los valores manualmente desde sii.cl/valores_y_fechas.';
+  }
+  document.getElementById('indConfirm').onclick = async ()=>{
+    const fecha = document.getElementById('indFecha').value;
+    const dolar = parseFloat(document.getElementById('indDolar').value)||null;
+    const uf = parseFloat(document.getElementById('indUf').value)||null;
+    const utm = parseFloat(document.getElementById('indUtm').value)||null;
+    if (!fecha){ alert('Ingresa una fecha.'); return; }
+    const { error } = await sb.from('indicadores').insert({fecha, dolar, uf, utm});
+    if (error){ alert('Error: '+error.message); return; }
+    await loadIndicadores(); closeModal('indicModal'); renderIndicBar();
+  };
 }
 
 /* ============================================================
@@ -627,17 +721,25 @@ function openInvoiceMapping(libro, headers, rows){
     folio: findHeaderIndex(headers,['folio']),
     fecha: findHeaderIndex(headers,['fecha docto','fecha documento','fecha emision','fecha']),
     monto: findHeaderIndex(headers,['monto total','monto liquido total','total','monto total documento']),
+    montoIva: findHeaderIndex(headers,['monto iva recuperable','monto iva','iva recuperable','iva']),
   };
-  const fields = [{key:'tipoDoc',label:'Tipo de documento'},{key:'rut',label:'RUT'},{key:'razonSocial',label:'Razón social'},{key:'folio',label:'Folio'},{key:'fecha',label:'Fecha'},{key:'monto',label:'Monto total'}];
+  const fields = [{key:'tipoDoc',label:'Tipo de documento'},{key:'rut',label:'RUT'},{key:'razonSocial',label:'Razón social'},{key:'folio',label:'Folio'},{key:'fecha',label:'Fecha'},{key:'monto',label:'Monto total'},{key:'montoIva',label:'Monto IVA (opcional, para F29)'}];
   document.getElementById('mapModalTitle').textContent = `Confirmar columnas · Libro de ${cfg.label}s`;
   document.getElementById('mapModalSub').textContent = `${rows.length} filas detectadas.`;
-  document.getElementById('mapModalBody').innerHTML = fields.map(f=>`
+  const defaultPeriodo = new Date().toISOString().slice(0,7);
+  document.getElementById('mapModalBody').innerHTML =
+    `<div class="map-field" style="background:#FBF0DA;padding:8px 10px;border-radius:6px;margin-bottom:6px;">
+      <label>Período tributario de este libro</label><input type="month" id="map_periodo" value="${defaultPeriodo}" style="flex:1;">
+    </div>
+    <div class="sub" style="margin:0 0 10px;">Todos los documentos de este archivo se contarán en este período para el precálculo F29, sin importar la fecha individual de cada documento (útil cuando un documento de un mes se registra en el libro de otro mes).</div>` +
+    fields.map(f=>`
     <div class="map-field"><label>${f.label}</label><select id="map_${f.key}"><option value="-1">— No usar —</option>
     ${headers.map((h,i)=>`<option value="${i}" ${guesses[f.key]===i?'selected':''}>${escapeHtml(h||'(columna '+(i+1)+')')}</option>`).join('')}</select></div>`).join('');
   document.getElementById('mapModal').classList.remove('hidden');
   document.getElementById('mapModalConfirm').onclick = async ()=>{
     const map = {}; fields.forEach(f=> map[f.key]=parseInt(document.getElementById('map_'+f.key).value));
     if (map.monto===-1){ alert('Debes seleccionar la columna de monto.'); return; }
+    const periodo = document.getElementById('map_periodo').value || defaultPeriodo;
     const invoices = rows.map(r=>({
       client_id: session.clientId, libro,
       tipo_doc: map.tipoDoc>-1?(r[map.tipoDoc]??'').toString():'',
@@ -646,14 +748,28 @@ function openInvoiceMapping(libro, headers, rows){
       folio: map.folio>-1?(r[map.folio]??'').toString():'',
       fecha: map.fecha>-1?parseFechaCell(r[map.fecha]):null,
       monto: Math.round(parseMonto(r[map.monto])),
+      monto_iva: map.montoIva>-1 ? Math.round(parseMonto(r[map.montoIva])) : null,
+      periodo,
       estado:'pendiente'
     })).filter(inv=>inv.monto>0);
+    const invKey = inv => `${(inv.tipo_doc||'').trim().toLowerCase()}|${(inv.rut||'').replace(/\D/g,'')}|${(inv.folio||'').trim()}`;
+    const existingKeys = new Set(cache[libro].invoices.filter(i=>i.folio).map(invKey));
+    const toInsert = []; let skipped = 0;
+    invoices.forEach(inv=>{
+      if (inv.folio && existingKeys.has(invKey(inv))){ skipped++; return; }
+      toInsert.push(inv);
+      if (inv.folio) existingKeys.add(invKey(inv));
+    });
+    if (!toInsert.length){
+      alert(`Los ${invoices.length} documentos del archivo ya estaban cargados (mismo tipo, RUT y folio). No se importó nada nuevo.`);
+      closeModal('mapModal'); return;
+    }
     const btn = document.getElementById('mapModalConfirm'); btn.disabled=true; btn.textContent='Importando...';
-    const { error } = await sb.from('invoices').insert(invoices);
+    const { error } = await sb.from('invoices').insert(toInsert);
     btn.disabled=false; btn.textContent='Confirmar e importar';
     if (error){ alert('Error al importar: '+error.message); return; }
     await loadClientData(); closeModal('mapModal'); renderAll();
-    alert(`${invoices.length} documentos importados al libro de ${cfg.label.toLowerCase()}s.`);
+    alert(`${toInsert.length} documentos importados al libro de ${cfg.label.toLowerCase()}s.` + (skipped ? `\n${skipped} ya existían (mismo tipo, RUT y folio) y se omitieron.` : ''));
   };
 }
 function openBankMapping(libro, headers, rows){
@@ -684,12 +800,24 @@ function openBankMapping(libro, headers, rows){
       if (useIdx===-1){ alert('Selecciona la columna correspondiente.'); return; }
       txns = rows.map(r=>({monto:parseMonto(r[useIdx]), fecha:parseFechaCell(r[fecha]), descripcion: desc>-1?(r[desc]??'').toString():''})); }
     const clean = txns.filter(t=>Math.abs(t.monto)>0).map(t=>({ client_id:session.clientId, libro, fecha:t.fecha||null, descripcion:t.descripcion, monto:Math.round(Math.abs(t.monto)) }));
+    const bankKey = t => `${t.fecha||''}|${t.monto}|${(t.descripcion||'').trim().toLowerCase()}`;
+    const existingKeys = new Set(cache[libro].bank.map(bankKey));
+    const toInsert = []; let skipped = 0;
+    clean.forEach(t=>{
+      const key = bankKey(t);
+      if (existingKeys.has(key)){ skipped++; return; }
+      toInsert.push(t); existingKeys.add(key);
+    });
+    if (!toInsert.length){
+      alert(`Los ${clean.length} movimientos del archivo ya estaban cargados (misma fecha, monto y descripción). No se importó nada nuevo.`);
+      closeModal('mapModal'); return;
+    }
     const btn = document.getElementById('mapModalConfirm'); btn.disabled=true; btn.textContent='Importando...';
-    const { error } = await sb.from('bank_txns').insert(clean);
+    const { error } = await sb.from('bank_txns').insert(toInsert);
     btn.disabled=false; btn.textContent='Confirmar e importar';
     if (error){ alert('Error al importar: '+error.message); return; }
     await loadClientData(); closeModal('mapModal'); renderAll();
-    alert(`${clean.length} movimientos de cartola importados.`);
+    alert(`${toInsert.length} movimientos de cartola importados.` + (skipped ? `\n${skipped} ya existían (misma fecha, monto y descripción) y se omitieron.` : ''));
   };
 }
 function toggleBankMode(){ const mode=document.getElementById('bmap_mode').value; document.getElementById('bmap_single_wrap').style.display=mode==='single'?'flex':'none'; document.getElementById('bmap_split_wrap').style.display=mode==='split'?'block':'none'; }
@@ -979,12 +1107,57 @@ function printOnly(section){
   window.print();
 }
 window.onafterprint = function(){
-  document.body.classList.remove('print-only-compras','print-only-ventas','print-only-fondos');
+  document.body.classList.remove('print-only-f29','print-only-compras','print-only-ventas','print-only-fondos');
 };
 function renderReportes(){
+  document.getElementById('reporte-f29').innerHTML = renderReporteF29();
   document.getElementById('reporte-compras').innerHTML = renderReporteLibro('compras');
   document.getElementById('reporte-ventas').innerHTML = renderReporteLibro('ventas');
   document.getElementById('reporte-fondos').innerHTML = renderReporteFondos();
+}
+function ivaOf(inv){
+  if (inv.monto_iva!==null && inv.monto_iva!==undefined) return inv.monto_iva;
+  return Math.round(inv.monto - inv.monto/1.19);
+}
+function invoicePeriodo(inv){
+  return inv.periodo || (inv.fecha||'').slice(0,7);
+}
+function renderReporteF29(){
+  const month = document.getElementById('f29Month')?.value || new Date().toISOString().slice(0,7);
+  const comprasMes = cache.compras.invoices.filter(i=>invoicePeriodo(i)===month);
+  const ventasMes = cache.ventas.invoices.filter(i=>invoicePeriodo(i)===month);
+  const debito = ventasMes.reduce((s,i)=>s+ivaOf(i),0);
+  const credito = comprasMes.reduce((s,i)=>s+ivaOf(i),0);
+  const remKey = `f29_rem_${session.clientId}_${month}`;
+  const remanenteGuardado = parseFloat(localStorage.getItem(remKey))||0;
+  const resultado = debito - (credito + remanenteGuardado);
+  const isPagar = resultado > 0;
+  return `
+    <div class="card">
+      <h2>Precálculo F29</h2>
+      <div class="sub">Estimación referencial de IVA a pagar o remanente — no reemplaza el F29 real (no considera exentos, notas de crédito, PPM u otros créditos especiales).</div>
+      <div class="actions-bar no-print">
+        <label style="font-size:13px;color:#5C6B72;">Período</label>
+        <input type="month" id="f29Month" value="${month}" onchange="renderReportes()">
+        <button class="btn" onclick="printOnly('f29')">Imprimir / PDF</button>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><div class="lbl">Ventas del período</div><div class="val">${formatCLP(ventasMes.reduce((s,i)=>s+i.monto,0))}</div></div>
+        <div class="stat ok"><div class="lbl">IVA Débito</div><div class="val">${formatCLP(debito)}</div></div>
+        <div class="stat"><div class="lbl">Compras del período</div><div class="val">${formatCLP(comprasMes.reduce((s,i)=>s+i.monto,0))}</div></div>
+        <div class="stat pend"><div class="lbl">IVA Crédito</div><div class="val">${formatCLP(credito)}</div></div>
+      </div>
+      <div class="map-field" style="max-width:340px;"><label>Remanente mes anterior</label><input type="number" id="f29Remanente" value="${remanenteGuardado}" onchange="saveF29Remanente('${month}')" style="width:180px;"></div>
+      <div class="fondo-card" style="margin-top:14px;background:${isPagar?'var(--amber-soft)':'var(--teal-soft)'};border-color:${isPagar?'#E9D6A8':'#BFE0D3'};">
+        <div style="font-size:13px;color:${isPagar?'var(--amber)':'var(--teal)'};font-weight:600;">${isPagar?'IVA a pagar (estimado)':'Remanente próximo mes (estimado)'}</div>
+        <div style="font-family:var(--mono);font-size:30px;font-weight:700;color:${isPagar?'var(--amber)':'var(--teal)'};">${formatCLP(Math.abs(resultado))}</div>
+      </div>
+    </div>`;
+}
+function saveF29Remanente(month){
+  const val = parseFloat(document.getElementById('f29Remanente').value)||0;
+  localStorage.setItem(`f29_rem_${session.clientId}_${month}`, val);
+  renderReportes();
 }
 function renderReporteLibro(libro){
   const cfg = LIBROS[libro];
