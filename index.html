@@ -63,6 +63,7 @@
   .badge.pendiente{background:var(--amber-soft);color:var(--amber);}
   .badge.pago_directo{background:var(--teal-soft);color:var(--teal);}
   .badge.conciliado{background:var(--blue-soft);color:var(--blue);}
+  .badge.pagado{background:var(--teal-soft);color:var(--teal);}
   .badge.parcial{background:#F1E6D8;color:#7A4E17;}
   .table-wrap{max-height:440px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
   .actions-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
@@ -199,6 +200,7 @@
   <h3>Conciliar transacción bancaria</h3>
   <div class="sub" id="matchModalSub"></div>
   <div class="match-list" id="matchList"></div>
+  <div class="map-field"><label>Monto a abonar</label><input type="number" id="matchAmount" step="1" oninput="updateMatchSum()" style="width:100%;"></div>
   <div class="match-sum" id="matchSum"></div>
   <div class="modal-actions"><button class="btn" onclick="closeModal('matchModal')">Cancelar</button><button class="btn-primary" id="matchModalConfirm" disabled>Asignar y conciliar</button></div>
 </div></div>
@@ -263,8 +265,8 @@ const LIBROS = {
 
 let session = { role:null, clientId:null, clientName:null, clientCode:null }; // role: 'office' | 'client'
 let cache = {
-  compras:{ invoices:[], bank:[], links:[] },
-  ventas:{ invoices:[], bank:[], links:[] },
+  compras:{ invoices:[], bank:[], links:[], abonosByInvoice:{} },
+  ventas:{ invoices:[], bank:[], links:[], abonosByInvoice:{} },
   fondos:[], gastosByFondo:{}
 };
 let pendingImport = null;
@@ -299,7 +301,14 @@ function parseFechaCell(v){
   if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
   return s;
 }
-function estadoLabel(e){ return {pendiente:'Pendiente',pago_directo:'Pago directo',conciliado:'Conciliado',parcial:'Parcial'}[e]||e; }
+function estadoLabel(e){ return {pendiente:'Pendiente',parcial:'Parcial',pagado:'Pagado'}[e]||e; }
+function invoicePagado(libro, invoiceId){
+  const abonos = cache[libro].abonosByInvoice[invoiceId] || [];
+  return abonos.reduce((s,a)=>s+a.monto, 0);
+}
+function invoiceSaldo(libro, inv){
+  return Math.max(0, Math.round((inv.monto - invoicePagado(libro, inv.id)) * 100) / 100);
+}
 
 /* ============================================================
    LOGIN
@@ -451,9 +460,17 @@ async function loadClientData(){
   cache.ventas.invoices  = (invRes.data||[]).filter(i=>i.libro==='ventas');
   cache.compras.bank = (bankRes.data||[]).filter(b=>b.libro==='compras');
   cache.ventas.bank  = (bankRes.data||[]).filter(b=>b.libro==='ventas');
-  const allInvoiceIds = new Set((invRes.data||[]).map(i=>i.id));
   cache.compras.links = (linkRes.data||[]).filter(l=>cache.compras.invoices.some(i=>i.id===l.invoice_id));
   cache.ventas.links  = (linkRes.data||[]).filter(l=>cache.ventas.invoices.some(i=>i.id===l.invoice_id));
+  const allInvoiceIds = (invRes.data||[]).map(i=>i.id);
+  cache.compras.abonosByInvoice = {}; cache.ventas.abonosByInvoice = {};
+  if (allInvoiceIds.length){
+    const { data: abonos } = await sb.from('abonos').select('*').in('invoice_id', allInvoiceIds).order('fecha');
+    (abonos||[]).forEach(a=>{
+      const libro = cache.compras.invoices.some(i=>i.id===a.invoice_id) ? 'compras' : 'ventas';
+      (cache[libro].abonosByInvoice[a.invoice_id] = cache[libro].abonosByInvoice[a.invoice_id]||[]).push(a);
+    });
+  }
   cache.fondos = fondoRes.data||[];
   if (cache.fondos.length){
     const { data: gastos } = await sb.from('gastos').select('*').in('fondo_id', cache.fondos.map(f=>f.id)).order('fecha');
@@ -486,8 +503,11 @@ function renderLibroPanel(libro){
   const data = cache[libro];
   const isOffice = session.role==='office';
   const pend = data.invoices.filter(i=>i.estado==='pendiente').length;
-  const resuelto = data.invoices.length - pend;
+  const parcial = data.invoices.filter(i=>i.estado==='parcial').length;
+  const pagadoCount = data.invoices.filter(i=>i.estado==='pagado').length;
   const totalMonto = data.invoices.reduce((s,i)=>s+i.monto,0);
+  const saldoTotal = data.invoices.reduce((s,i)=>s+invoiceSaldo(libro,i),0);
+  const pagadoTotal = totalMonto - saldoTotal;
   const linkedBankIds = new Set(data.links.map(l=>l.bank_txn_id));
   const unmatchedBank = data.bank.filter(b=>!linkedBankIds.has(b.id));
 
@@ -496,8 +516,8 @@ function renderLibroPanel(libro){
     <div class="stat-row">
       <div class="stat"><div class="lbl">Documentos</div><div class="val">${data.invoices.length}</div></div>
       <div class="stat"><div class="lbl">Monto total</div><div class="val">${formatCLP(totalMonto)}</div></div>
-      <div class="stat pend"><div class="lbl">Pendientes</div><div class="val">${pend}</div></div>
-      <div class="stat ok"><div class="lbl">Resueltos</div><div class="val">${resuelto}</div></div>
+      <div class="stat pend"><div class="lbl">Saldo pendiente</div><div class="val">${formatCLP(saldoTotal)}</div></div>
+      <div class="stat ok"><div class="lbl">Pagado</div><div class="val">${formatCLP(pagadoTotal)}</div></div>
     </div>
     ${isOffice ? `
     <div class="card">
@@ -511,8 +531,9 @@ function renderLibroPanel(libro){
     </div>
     <div class="card">
       <h2>2. Registrar ${cfg.accion}</h2>
+      <div class="sub">Los documentos admiten <b>abonos parciales</b>: puedes registrar pagos de a poco hasta completar el saldo, combinando pago directo y cartola.</div>
       <div class="grid2">
-        <div><b style="font-size:13px;">Opción A · Pago directo</b><p class="sub" style="margin:6px 0 10px;">Selecciona documentos en la tabla y usa "Marcar pago directo".</p></div>
+        <div><b style="font-size:13px;">Opción A · Pago directo</b><p class="sub" style="margin:6px 0 10px;">Usa "Abonar" en cada documento del listado para dejar un pago total o parcial. También puedes seleccionar varios y "Marcar pagado" para cerrarlos completos de una vez.</p></div>
         <div>
           <b style="font-size:13px;">Opción B · Cartola bancaria</b>
           <div class="drop" style="margin-top:8px;" onclick="document.getElementById('bank-${libro}').click()" ondrop="handleDrop(event,'${libro}','bank')" ondragover="event.preventDefault()">🏦 Subir cartola</div>
@@ -527,11 +548,11 @@ function renderLibroPanel(libro){
       <div class="actions-bar no-print">
         <select id="filter-${libro}" onchange="renderAll()">
           <option value="todos">Todos los estados</option>
-          <option value="pendiente">Pendientes</option>
-          <option value="pago_directo">Pago directo</option>
-          <option value="conciliado">Conciliado</option>
+          <option value="pendiente">Pendientes (${pend})</option>
+          <option value="parcial">Parciales (${parcial})</option>
+          <option value="pagado">Pagados (${pagadoCount})</option>
         </select>
-        ${isOffice ? `<button class="btn" onclick="selectAllRows('${libro}')">Seleccionar todo (visible)</button><button class="btn-primary" onclick="openPayModal('${libro}')">Marcar pago directo</button>` : ''}
+        ${isOffice ? `<button class="btn" onclick="selectAllRows('${libro}')">Seleccionar todo (visible)</button><button class="btn-primary" onclick="openPayModal('${libro}')">Marcar pagado (seleccionados)</button>` : ''}
       </div>
       ${renderInvoiceTable(libro)}
     </div>
@@ -557,13 +578,18 @@ function renderInvoiceTable(libro){
   if (!rows.length) return `<div class="empty"><b>Sin documentos que mostrar</b>Sube el libro de ${cfg.label.toLowerCase()}s del SII para comenzar.</div>`;
   return `
     <div class="table-wrap"><table>
-      <thead><tr>${session.role==='office'?'<th class="no-print"><input type="checkbox" onclick="toggleAllCheckboxes(\''+libro+'\',this)"></th>':''}<th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th>Estado</th></tr></thead>
-      <tbody>${rows.map(inv=>`<tr>
+      <thead><tr>${session.role==='office'?'<th class="no-print"><input type="checkbox" onclick="toggleAllCheckboxes(\''+libro+'\',this)"></th>':''}<th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th class="num">Pagado</th><th class="num">Saldo</th><th>Estado</th>${session.role==='office'?'<th></th>':''}</tr></thead>
+      <tbody>${rows.map(inv=>{
+        const pagado = invoicePagado(libro, inv.id);
+        const saldo = invoiceSaldo(libro, inv);
+        return `<tr>
         ${session.role==='office'?`<td class="no-print"><input type="checkbox" class="rowchk-${libro}" value="${inv.id}"></td>`:''}
         <td>${escapeHtml(inv.tipo_doc||'—')}</td><td class="mono">${escapeHtml(inv.rut||'—')}</td><td>${escapeHtml(inv.razon_social||'—')}</td>
         <td class="mono">${escapeHtml(inv.folio||'—')}</td><td class="mono">${inv.fecha||'—'}</td><td class="num">${formatCLP(inv.monto)}</td>
+        <td class="num">${formatCLP(pagado)}</td><td class="num">${formatCLP(saldo)}</td>
         <td><span class="badge ${inv.estado}">${estadoLabel(inv.estado)}</span></td>
-      </tr>`).join('')}</tbody>
+        ${session.role==='office'?`<td>${saldo>0?`<button class="btn" style="padding:3px 8px;font-size:11px;" onclick="openAbonoModal('${libro}','${inv.id}')">Abonar</button>`:''}</td>`:''}
+      </tr>`;}).join('')}</tbody>
     </table></div>`;
 }
 function toggleAllCheckboxes(libro, master){ document.querySelectorAll('.rowchk-'+libro).forEach(c=>c.checked=master.checked); }
@@ -669,25 +695,69 @@ function openBankMapping(libro, headers, rows){
 function toggleBankMode(){ const mode=document.getElementById('bmap_mode').value; document.getElementById('bmap_single_wrap').style.display=mode==='single'?'flex':'none'; document.getElementById('bmap_split_wrap').style.display=mode==='split'?'block':'none'; }
 
 /* ============================================================
-   PAGO DIRECTO
+   ABONOS (pagos totales o parciales)
    ============================================================ */
+async function updateEstadosFor(libro, invoiceIds){
+  const groups = { pendiente:[], parcial:[], pagado:[] };
+  [...new Set(invoiceIds)].forEach(id=>{
+    const inv = cache[libro].invoices.find(i=>i.id===id);
+    if (!inv) return;
+    const saldo = invoiceSaldo(libro, inv);
+    const estado = saldo<=0 ? 'pagado' : (saldo<inv.monto ? 'parcial' : 'pendiente');
+    groups[estado].push(id);
+  });
+  for (const estado of Object.keys(groups)){
+    if (groups[estado].length) await sb.from('invoices').update({estado}).in('id', groups[estado]);
+  }
+}
+async function registerAbonos(libro, abonosArray){
+  const { error } = await sb.from('abonos').insert(abonosArray);
+  if (error){ alert('Error al registrar el pago: '+error.message); return false; }
+  await loadClientData();
+  await updateEstadosFor(libro, abonosArray.map(a=>a.invoice_id));
+  await loadClientData();
+  return true;
+}
 function openPayModal(libro){
   if (!requireOffice()) return;
   const ids = getSelectedIds(libro);
   if (!ids.length){ alert('Selecciona al menos un documento en la tabla.'); return; }
-  const invs = cache[libro].invoices.filter(i=>ids.includes(i.id) && i.estado==='pendiente');
-  if (!invs.length){ alert('Los documentos seleccionados ya no están pendientes.'); return; }
-  const total = invs.reduce((s,i)=>s+i.monto,0);
-  document.getElementById('payModalSub').textContent = `${invs.length} documento(s) · Monto total ${formatCLP(total)}`;
+  const invs = cache[libro].invoices.filter(i=>ids.includes(i.id) && invoiceSaldo(libro,i)>0);
+  if (!invs.length){ alert('Los documentos seleccionados no tienen saldo pendiente.'); return; }
+  const totalSaldo = invs.reduce((s,i)=>s+invoiceSaldo(libro,i),0);
+  document.getElementById('payModalSub').textContent = `${invs.length} documento(s) · Saldo pendiente total ${formatCLP(totalSaldo)}. Si dejas un monto menor, se abona proporcionalmente a cada documento.`;
   document.getElementById('payDate').value = new Date().toISOString().slice(0,10);
-  document.getElementById('payAmount').value = total;
+  document.getElementById('payAmount').value = totalSaldo;
   document.getElementById('payModal').classList.remove('hidden');
   document.getElementById('payModalConfirm').onclick = async ()=>{
     const fecha = document.getElementById('payDate').value;
-    const monto = parseFloat(document.getElementById('payAmount').value)||total;
-    const { error } = await sb.from('invoices').update({estado:'pago_directo', pago_fecha:fecha, pago_monto: monto/invs.length}).in('id', invs.map(i=>i.id));
-    if (error){ alert('Error: '+error.message); return; }
-    await loadClientData(); closeModal('payModal'); renderAll();
+    let monto = parseFloat(document.getElementById('payAmount').value);
+    if (!monto || monto<=0){ alert('Ingresa un monto válido.'); return; }
+    if (monto > totalSaldo) monto = totalSaldo;
+    const abonos = invs.map(i=>{
+      const saldo = invoiceSaldo(libro,i);
+      const share = totalSaldo>0 ? Math.round(monto * (saldo/totalSaldo)) : 0;
+      return { invoice_id:i.id, fecha, monto: Math.min(share, saldo), origen:'directo' };
+    }).filter(a=>a.monto>0);
+    const ok = await registerAbonos(libro, abonos);
+    if (ok){ closeModal('payModal'); renderAll(); }
+  };
+}
+function openAbonoModal(libro, invoiceId){
+  if (!requireOffice()) return;
+  const inv = cache[libro].invoices.find(i=>i.id===invoiceId);
+  const saldo = invoiceSaldo(libro, inv);
+  document.getElementById('payModalSub').textContent = `${escapeHtml(inv.razon_social||inv.rut||'')} · Folio ${escapeHtml(inv.folio||'—')} · Saldo pendiente ${formatCLP(saldo)}`;
+  document.getElementById('payDate').value = new Date().toISOString().slice(0,10);
+  document.getElementById('payAmount').value = saldo;
+  document.getElementById('payModal').classList.remove('hidden');
+  document.getElementById('payModalConfirm').onclick = async ()=>{
+    const fecha = document.getElementById('payDate').value;
+    let monto = parseFloat(document.getElementById('payAmount').value);
+    if (!monto || monto<=0){ alert('Ingresa un monto válido.'); return; }
+    if (monto > saldo) monto = saldo;
+    const ok = await registerAbonos(libro, [{ invoice_id: invoiceId, fecha, monto, origen:'directo' }]);
+    if (ok){ closeModal('payModal'); renderAll(); }
   };
 }
 
@@ -697,56 +767,83 @@ function openPayModal(libro){
 async function autoConciliar(libro){
   if (!requireOffice()) return;
   const data = cache[libro];
-  const pendInv = data.invoices.filter(i=>i.estado==='pendiente');
+  const pendInv = data.invoices.filter(i=>invoiceSaldo(libro,i)>0);
   const linkedBankIds = new Set(data.links.map(l=>l.bank_txn_id));
   const unmatchedBank = data.bank.filter(b=>!linkedBankIds.has(b.id));
-  const byMonto = {};
-  pendInv.forEach(i=>{ (byMonto[i.monto]=byMonto[i.monto]||[]).push(i); });
-  const invoiceIds = []; const links = [];
+  const bySaldo = {};
+  pendInv.forEach(i=>{ const s=invoiceSaldo(libro,i); (bySaldo[s]=bySaldo[s]||[]).push(i); });
+  const abonos = []; const links = []; const matchedIds = [];
   unmatchedBank.forEach(tx=>{
-    const cands = byMonto[tx.monto];
-    if (cands && cands.length===1){ invoiceIds.push(cands[0].id); links.push({invoice_id:cands[0].id, bank_txn_id:tx.id}); byMonto[tx.monto]=[]; }
+    const cands = bySaldo[tx.monto];
+    if (cands && cands.length===1){
+      const inv = cands[0];
+      abonos.push({ invoice_id:inv.id, fecha: tx.fecha, monto: tx.monto, origen:'banco', bank_txn_id: tx.id });
+      links.push({invoice_id:inv.id, bank_txn_id:tx.id});
+      matchedIds.push(inv.id);
+      bySaldo[tx.monto] = [];
+    }
   });
-  if (!invoiceIds.length){ alert('No se encontraron coincidencias únicas automáticas. Usa "Conciliar" en cada movimiento para asignación manual.'); return; }
-  const { error: e1 } = await sb.from('invoices').update({estado:'conciliado'}).in('id', invoiceIds);
+  if (!abonos.length){ alert('No se encontraron coincidencias únicas automáticas (comparando el saldo pendiente de cada documento). Usa "Conciliar" en cada movimiento para asignación manual.'); return; }
+  const { error: e1 } = await sb.from('abonos').insert(abonos);
   const { error: e2 } = await sb.from('invoice_bank_links').insert(links);
   if (e1||e2){ alert('Error al conciliar: '+((e1||e2).message)); return; }
+  await loadClientData();
+  await updateEstadosFor(libro, matchedIds);
   await loadClientData(); renderAll();
-  alert(`${invoiceIds.length} documento(s) conciliados automáticamente. Revisa los movimientos restantes para conciliación manual.`);
+  alert(`${matchedIds.length} documento(s) conciliados automáticamente. Revisa los movimientos restantes para conciliación manual.`);
 }
 function openMatchModal(libro, bankTxnId){
   if (!requireOffice()) return;
   const tx = cache[libro].bank.find(b=>b.id===bankTxnId);
-  const pend = cache[libro].invoices.filter(i=>i.estado==='pendiente');
+  const pend = cache[libro].invoices.filter(i=>invoiceSaldo(libro,i)>0);
   pendingMatch = {libro, bankTxnId};
-  document.getElementById('matchModalSub').textContent = `Movimiento: ${tx.fecha||''} · ${escapeHtml(tx.descripcion||'')} · ${formatCLP(tx.monto)}.`;
+  document.getElementById('matchModalSub').textContent = `Movimiento: ${tx.fecha||''} · ${escapeHtml(tx.descripcion||'')} · ${formatCLP(tx.monto)}. Puedes dejarlo como abono parcial si eliges un solo documento.`;
   document.getElementById('matchList').innerHTML = pend.length ? pend.map(inv=>`
-    <div class="match-item"><input type="checkbox" data-invid="${inv.id}" data-monto="${inv.monto}" onchange="updateMatchSum()">
+    <div class="match-item"><input type="checkbox" data-invid="${inv.id}" data-saldo="${invoiceSaldo(libro,inv)}" onchange="updateMatchSum()">
     <span class="mono" style="min-width:80px;">${inv.fecha||''}</span><span style="flex:1;">${escapeHtml(inv.razon_social||inv.rut||'')} · Folio ${escapeHtml(inv.folio||'—')}</span>
-    <span class="num">${formatCLP(inv.monto)}</span></div>`).join('') : `<div class="empty">No hay documentos pendientes.</div>`;
+    <span class="num">${formatCLP(invoiceSaldo(libro,inv))} <span style="color:#8A8578;">saldo</span></span></div>`).join('') : `<div class="empty">No hay documentos con saldo pendiente.</div>`;
   document.getElementById('matchModal').classList.remove('hidden');
   updateMatchSum();
   document.getElementById('matchModalConfirm').onclick = confirmMatch;
 }
 function updateMatchSum(){
   const tx = cache[pendingMatch.libro].bank.find(b=>b.id===pendingMatch.bankTxnId);
-  const checked = Array.from(document.querySelectorAll('#matchList input:checked'));
-  const sum = checked.reduce((s,c)=>s+parseFloat(c.dataset.monto),0);
-  const diff = tx.monto - sum;
+  const checked = Array.from(document.querySelectorAll('#matchList input[type=checkbox]:checked'));
+  const sumSaldo = checked.reduce((s,c)=>s+parseFloat(c.dataset.saldo),0);
+  const amountInput = document.getElementById('matchAmount');
+  if (checked.length===1){
+    amountInput.disabled = false;
+    if (document.activeElement !== amountInput) amountInput.value = Math.min(sumSaldo, tx.monto);
+  } else {
+    amountInput.disabled = true;
+    amountInput.value = sumSaldo;
+  }
+  const applied = parseFloat(amountInput.value)||0;
+  const diff = tx.monto - applied;
   const el = document.getElementById('matchSum');
-  el.className = 'match-sum ' + (diff===0 && checked.length ? 'ok':'bad');
-  el.innerHTML = `<span>Movimiento: ${formatCLP(tx.monto)}</span><span>Seleccionado: ${formatCLP(sum)} ${checked.length?(diff===0?'✓ coincide':'· diferencia '+formatCLP(diff)):''}</span>`;
-  document.getElementById('matchModalConfirm').disabled = checked.length===0;
+  const valid = checked.length>0 && applied>0 && applied<=sumSaldo && (checked.length===1 || applied===sumSaldo);
+  el.className = 'match-sum ' + (valid ? 'ok':'bad');
+  el.innerHTML = checked.length===1
+    ? `<span>Movimiento: ${formatCLP(tx.monto)}</span><span>Monto a abonar: ${formatCLP(applied)} de saldo ${formatCLP(sumSaldo)}${diff!==0?' · queda '+formatCLP(tx.monto-applied)+' del movimiento sin usar':''}</span>`
+    : `<span>Movimiento: ${formatCLP(tx.monto)}</span><span>Saldo seleccionado: ${formatCLP(sumSaldo)} ${checked.length?(sumSaldo===applied?'✓ coincide':'· debe coincidir exacto para varios documentos'):''}</span>`;
+  document.getElementById('matchModalConfirm').disabled = !valid;
 }
 async function confirmMatch(){
   const tx = cache[pendingMatch.libro].bank.find(b=>b.id===pendingMatch.bankTxnId);
-  const checked = Array.from(document.querySelectorAll('#matchList input:checked'));
+  const checked = Array.from(document.querySelectorAll('#matchList input[type=checkbox]:checked'));
   const ids = checked.map(c=>c.dataset.invid);
-  const sum = checked.reduce((s,c)=>s+parseFloat(c.dataset.monto),0);
-  const exact = sum === tx.monto;
-  const { error: e1 } = await sb.from('invoices').update({estado: exact?'conciliado':'parcial'}).in('id', ids);
+  const applied = parseFloat(document.getElementById('matchAmount').value)||0;
+  let abonos;
+  if (ids.length===1){
+    abonos = [{ invoice_id: ids[0], fecha: tx.fecha, monto: applied, origen:'banco', bank_txn_id: tx.id }];
+  } else {
+    abonos = checked.map(c=>({ invoice_id: c.dataset.invid, fecha: tx.fecha, monto: parseFloat(c.dataset.saldo), origen:'banco', bank_txn_id: tx.id }));
+  }
+  const { error: e1 } = await sb.from('abonos').insert(abonos);
   const { error: e2 } = await sb.from('invoice_bank_links').insert(ids.map(id=>({invoice_id:id, bank_txn_id:tx.id})));
   if (e1||e2){ alert('Error: '+((e1||e2).message)); return; }
+  await loadClientData();
+  await updateEstadosFor(pendingMatch.libro, ids);
   await loadClientData(); closeModal('matchModal'); renderAll();
 }
 
@@ -896,10 +993,10 @@ function renderReporteLibro(libro){
   let rows = data;
   if (filter!=='todos') rows = rows.filter(i=>i.estado===filter);
   const total = data.reduce((s,i)=>s+i.monto,0);
-  const pend = data.filter(i=>i.estado==='pendiente');
-  const pendMonto = pend.reduce((s,i)=>s+i.monto,0);
-  const pagadoMonto = data.filter(i=>i.estado!=='pendiente').reduce((s,i)=>s+i.monto,0);
-  const pctConc = data.length ? Math.round((data.length-pend.length)/data.length*100) : 0;
+  const saldoTotal = data.reduce((s,i)=>s+invoiceSaldo(libro,i),0);
+  const pagadoMonto = total - saldoTotal;
+  const pend = data.filter(i=>i.estado==='pendiente').length;
+  const pctConc = data.length ? Math.round((data.length-pend)/data.length*100) : 0;
   return `
     <div class="card">
       <h2>${cfg.flow==='pagar'?'Cuentas por Pagar':'Cuentas por Cobrar'} — Libro de ${cfg.label}s</h2>
@@ -907,22 +1004,23 @@ function renderReporteLibro(libro){
       <div class="stat-row">
         <div class="stat"><div class="lbl">Documentos</div><div class="val">${data.length}</div></div>
         <div class="stat"><div class="lbl">Monto total</div><div class="val">${formatCLP(total)}</div></div>
-        <div class="stat pend"><div class="lbl">${cfg.flow==='pagar'?'Por pagar':'Por cobrar'}</div><div class="val">${formatCLP(pendMonto)}</div></div>
+        <div class="stat pend"><div class="lbl">${cfg.flow==='pagar'?'Por pagar':'Por cobrar'}</div><div class="val">${formatCLP(saldoTotal)}</div></div>
         <div class="stat ok"><div class="lbl">${cfg.flow==='pagar'?'Pagado':'Cobrado'}</div><div class="val">${formatCLP(pagadoMonto)}</div></div>
         <div class="stat ok"><div class="lbl">% resuelto</div><div class="val">${pctConc}%</div></div>
       </div>
       <div class="actions-bar no-print">
         <select id="repfilter-${libro}" onchange="renderReportes()">
-          <option value="todos">Todos</option><option value="pendiente">Pendientes</option><option value="pago_directo">Pago directo</option><option value="conciliado">Conciliado</option><option value="parcial">Parcial</option>
+          <option value="todos">Todos</option><option value="pendiente">Pendientes</option><option value="parcial">Parciales</option><option value="pagado">Pagados</option>
         </select>
         <button class="btn" onclick="exportExcel('${libro}')">Exportar a Excel</button>
         <button class="btn" onclick="printOnly('${libro}')">Imprimir / PDF</button>
       </div>
       ${rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th>Estado</th><th>Fecha resolución</th></tr></thead>
+        <thead><tr><th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th class="num">Pagado</th><th class="num">Saldo</th><th>Estado</th></tr></thead>
         <tbody>${rows.map(i=>`<tr><td>${escapeHtml(i.tipo_doc||'—')}</td><td class="mono">${escapeHtml(i.rut||'—')}</td><td>${escapeHtml(i.razon_social||'—')}</td>
           <td class="mono">${escapeHtml(i.folio||'—')}</td><td class="mono">${i.fecha||'—'}</td><td class="num">${formatCLP(i.monto)}</td>
-          <td><span class="badge ${i.estado}">${estadoLabel(i.estado)}</span></td><td class="mono">${i.pago_fecha||''}</td></tr>`).join('')}</tbody>
+          <td class="num">${formatCLP(invoicePagado(libro,i.id))}</td><td class="num">${formatCLP(invoiceSaldo(libro,i))}</td>
+          <td><span class="badge ${i.estado}">${estadoLabel(i.estado)}</span></td></tr>`).join('')}</tbody>
       </table></div>` : `<div class="empty"><b>Sin datos</b>Aún no se han cargado documentos en este libro.</div>`}
     </div>`;
 }
@@ -946,7 +1044,7 @@ function renderReporteFondos(){
 }
 function exportExcel(libro){
   const cfg = LIBROS[libro];
-  const rows = cache[libro].invoices.map(i=>({ Tipo:i.tipo_doc, RUT:i.rut, [cfg.personLabel]:i.razon_social, Folio:i.folio, Fecha:i.fecha, Monto:i.monto, Estado:estadoLabel(i.estado), 'Fecha resolución':i.pago_fecha||'' }));
+  const rows = cache[libro].invoices.map(i=>({ Tipo:i.tipo_doc, RUT:i.rut, [cfg.personLabel]:i.razon_social, Folio:i.folio, Fecha:i.fecha, Monto:i.monto, Pagado:invoicePagado(libro,i.id), Saldo:invoiceSaldo(libro,i), Estado:estadoLabel(i.estado) }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, cfg.label+'s');
