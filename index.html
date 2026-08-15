@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión Contable y Rendiciones · Control Contabilidad</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --ink:#132A3A; --ink-soft:#2C4A5E;
+    --paper:#F6F4EF; --paper-card:#FFFFFF; --line:#DCD6C9;
+    --teal:#1F6E5C; --teal-soft:#E4F0EC;
+    --amber:#9A6B12; --amber-soft:#FBF0DA;
+    --rust:#A33B2B; --rust-soft:#FBE7E3;
+    --blue:#1D5C8A; --blue-soft:#DFEAF3;
+    --mono:'IBM Plex Mono', ui-monospace, monospace;
+    --sans:'IBM Plex Sans', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--sans);background:var(--paper);color:var(--ink);}
+  header.top{background:var(--ink);color:#F4F1E9;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+  header.top .brand{display:flex;align-items:baseline;gap:10px;}
+  header.top .brand b{font-size:18px;}
+  header.top .brand span{font-size:12px;color:#B9C6CC;font-family:var(--mono);}
+  .client-badge{background:#1D3B4E;border:1px solid #35586D;border-radius:20px;padding:6px 14px;font-size:13px;display:flex;align-items:center;gap:8px;}
+  .client-badge .role{font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:10px;}
+  .client-badge .role.office{background:var(--teal);color:#fff;}
+  .client-badge .role.client{background:var(--blue);color:#fff;}
+  .top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .pill-btn{background:transparent;border:1px solid #3A5A6C;color:#E7EDEA;padding:8px 12px;border-radius:20px;font-size:12.5px;cursor:pointer;font-family:var(--sans);}
+  .pill-btn:hover{background:#1D3B4E;}
+  nav.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #24445A;overflow-x:auto;}
+  nav.tabs button{background:transparent;border:none;color:#B9C6CC;padding:12px 16px;font-family:var(--sans);font-size:13.5px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;}
+  nav.tabs button.active{color:#fff;border-bottom:3px solid var(--teal);}
+  main{max-width:1180px;margin:0 auto;padding:26px 24px 60px;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+  .card{background:var(--paper-card);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin-bottom:18px;}
+  .card h2{margin:0 0 4px;font-size:16px;}
+  .card .sub{color:#5C6B72;font-size:12.5px;margin-bottom:14px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:820px){.grid2{grid-template-columns:1fr;}}
+  .drop{border:1.5px dashed #B7ADA0;border-radius:8px;padding:22px;text-align:center;cursor:pointer;background:#FBFAF6;}
+  .drop:hover{border-color:var(--teal);background:var(--teal-soft);}
+  .drop .hint{font-size:12px;color:#7A756A;margin-top:4px;}
+  .stat-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .stat{flex:1;min-width:140px;background:var(--paper-card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;}
+  .stat .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#7A756A;}
+  .stat .val{font-family:var(--mono);font-size:20px;font-weight:600;margin-top:4px;}
+  .stat.pend .val{color:var(--amber);}
+  .stat.ok .val{color:var(--teal);}
+  .stat.bad .val{color:var(--rust);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#7A756A;border-bottom:1px solid var(--line);padding:8px;background:#FBFAF6;position:sticky;top:0;}
+  tbody td{padding:9px 8px;border-bottom:1px solid #EFEBE1;vertical-align:middle;}
+  tbody tr:hover{background:#FAF8F2;}
+  .mono{font-family:var(--mono);}
+  .num{text-align:right;font-family:var(--mono);white-space:nowrap;}
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+  .badge.pendiente{background:var(--amber-soft);color:var(--amber);}
+  .badge.pago_directo{background:var(--teal-soft);color:var(--teal);}
+  .badge.conciliado{background:var(--blue-soft);color:var(--blue);}
+  .badge.parcial{background:#F1E6D8;color:#7A4E17;}
+  .table-wrap{max-height:440px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
+  .actions-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+  select,button,input[type=text],input[type=number],input[type=date],input[type=password],input[type=file],textarea{
+    font-family:var(--sans);font-size:13px;border-radius:6px;border:1px solid #C9C2B3;padding:7px 10px;background:#fff;color:var(--ink);
+  }
+  button{cursor:pointer;}
+  .btn{background:#fff;border:1px solid #C9C2B3;}
+  .btn:hover{border-color:var(--ink-soft);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn-primary{background:var(--teal);border-color:var(--teal);color:#fff;}
+  .btn-primary:hover{background:#175A4B;}
+  .btn-primary:disabled{background:#9DBBB2;border-color:#9DBBB2;}
+  .empty{padding:34px 10px;text-align:center;color:#8A8578;}
+  .empty b{display:block;color:var(--ink);font-size:14px;margin-bottom:4px;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(19,42,58,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;}
+  .modal-overlay.hidden{display:none;}
+  .modal{background:#fff;border-radius:10px;max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:22px 24px;}
+  .modal h3{margin-top:0;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;}
+  .map-field{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #F0ECE2;}
+  .map-field label{font-size:13px;color:#5C6B72;min-width:150px;}
+  .map-field select,.map-field input,.map-field textarea{flex:1;}
+  .match-list{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:10px 0;}
+  .match-item{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #F3F0E8;font-size:13px;}
+  .match-sum{display:flex;justify-content:space-between;font-family:var(--mono);font-size:13px;padding:8px 2px;border-top:1px dashed var(--line);margin-top:6px;}
+  .match-sum.ok{color:var(--teal);}
+  .match-sum.bad{color:var(--rust);}
+  footer{max-width:1180px;margin:0 auto;padding:0 24px 40px;color:#8A8578;font-size:12px;line-height:1.6;}
+  .locked-note{background:var(--amber-soft);color:#7A4E17;border:1px solid #E9D6A8;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px;}
+  /* login */
+  #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--ink);}
+  .login-card{background:#fff;border-radius:14px;padding:40px 36px;max-width:420px;width:92%;text-align:center;}
+  .login-card h1{font-size:22px;margin:0 0 6px;}
+  .login-card p{color:#5C6B72;font-size:13.5px;margin:0 0 26px;}
+  .login-choice{display:flex;flex-direction:column;gap:12px;}
+  .login-choice button{padding:14px;font-size:14.5px;border-radius:8px;}
+  .login-back{margin-top:18px;background:none;border:none;color:#5C6B72;text-decoration:underline;font-size:12.5px;}
+  .client-list{max-height:280px;overflow:auto;text-align:left;margin:14px 0;}
+  .client-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;}
+  .client-row:hover{border-color:var(--teal);background:var(--teal-soft);}
+  .client-row .code{font-family:var(--mono);font-size:11px;color:#7A756A;}
+  /* fondos */
+  .fondo-card{border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px;background:#FBFAF6;}
+  .fondo-head{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;margin-bottom:6px;}
+  .fondo-head b{font-size:14.5px;}
+  .fondo-meta{color:#5C6B72;font-size:12px;margin-bottom:10px;}
+  .fondo-stats{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;font-family:var(--mono);font-size:13px;}
+  .fondo-stats span b{display:block;font-size:15px;}
+  .doc-link{color:var(--blue);text-decoration:underline;font-size:12px;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:var(--teal);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @media print{
+    header.top, nav.tabs, .no-print{display:none !important;}
+    body{background:#fff;}
+    .card{border:none;}
+    #panel-compras, #panel-ventas, #panel-fondos{display:none !important;}
+    #panel-reportes{display:block !important;}
+    #reportes-header{display:none;}
+    #reporte-compras, #reporte-ventas, #reporte-fondos{display:none;}
+    body.print-only-compras #reporte-compras{display:block !important;}
+    body.print-only-ventas #reporte-ventas{display:block !important;}
+    body.print-only-fondos #reporte-fondos{display:block !important;}
+  }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-card" id="loginCard">
+    <h1>Gestión Contable y Rendiciones</h1>
+    <p>Control Contabilidad</p>
+    <div class="login-choice" id="loginChoice">
+      <button class="btn btn-primary" onclick="showOfficeLogin()">Soy de la oficina contable</button>
+      <button class="btn" onclick="showClientLogin()">Soy cliente</button>
+    </div>
+  </div>
+</div>
+
+<div id="appRoot" style="display:none;">
+  <header class="top no-print">
+    <div class="brand">
+      <b>Gestión Contable y Rendiciones</b>
+      <span>libros · cartola · fondos por rendir</span>
+    </div>
+    <div class="client-badge" id="clientBadge"></div>
+    <div class="top-actions">
+      <button class="pill-btn" id="switchClientBtn" onclick="backToClientSelector()" style="display:none;">Cambiar cliente</button>
+      <button class="pill-btn" onclick="logout()">Salir</button>
+    </div>
+  </header>
+
+  <nav class="tabs no-print">
+    <button class="tab-btn active" data-tab="compras" onclick="switchTab('compras')">Cuentas por Pagar</button>
+    <button class="tab-btn" data-tab="ventas" onclick="switchTab('ventas')">Cuentas por Cobrar</button>
+    <button class="tab-btn" data-tab="fondos" onclick="switchTab('fondos')">Fondos por Rendir</button>
+    <button class="tab-btn" data-tab="reportes" onclick="switchTab('reportes')">Reportes</button>
+  </nav>
+
+  <main>
+    <div class="panel active" id="panel-compras"></div>
+    <div class="panel" id="panel-ventas"></div>
+    <div class="panel" id="panel-fondos"></div>
+    <div class="panel" id="panel-reportes">
+      <div class="card" id="reportes-header"><h2>Reportes</h2><div class="sub">Estado de conciliación y rendiciones. Exporta a Excel o imprime como PDF.</div></div>
+      <div id="reporte-compras"></div>
+      <div id="reporte-ventas"></div>
+      <div id="reporte-fondos"></div>
+    </div>
+  </main>
+
+  <footer class="no-print">
+    Los datos se guardan en la base de datos Supabase de tu oficina. El emparejamiento con cartola es por monto: si hay ambigüedad, la app pide confirmación manual.
+  </footer>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay hidden" id="mapModal"><div class="modal">
+  <h3 id="mapModalTitle">Confirmar columnas</h3>
+  <div class="sub" id="mapModalSub"></div>
+  <div id="mapModalBody"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('mapModal')">Cancelar</button><button class="btn-primary" id="mapModalConfirm">Confirmar e importar</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="payModal"><div class="modal">
+  <h3>Marcar pago directo</h3>
+  <div class="sub" id="payModalSub"></div>
+  <div class="map-field"><label>Fecha de pago</label><input type="date" id="payDate"></div>
+  <div class="map-field"><label>Monto pagado</label><input type="number" id="payAmount" step="1"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('payModal')">Cancelar</button><button class="btn-primary" id="payModalConfirm">Confirmar pago</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="matchModal"><div class="modal">
+  <h3>Conciliar transacción bancaria</h3>
+  <div class="sub" id="matchModalSub"></div>
+  <div class="match-list" id="matchList"></div>
+  <div class="match-sum" id="matchSum"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('matchModal')">Cancelar</button><button class="btn-primary" id="matchModalConfirm" disabled>Asignar y conciliar</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="pinModal"><div class="modal" style="max-width:380px;">
+  <h3 id="pinModalTitle">PIN de contador</h3>
+  <div class="sub" id="pinModalSub"></div>
+  <input type="password" id="pinInput" placeholder="PIN" style="width:100%;margin-top:6px;">
+  <div class="modal-actions"><button class="btn" onclick="closeModal('pinModal')">Cancelar</button><button class="btn-primary" id="pinModalConfirm">Continuar</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="newClientModal"><div class="modal" style="max-width:420px;">
+  <h3 id="ncTitle">Nuevo cliente</h3>
+  <div class="map-field"><label>Nombre / Razón social</label><input type="text" id="ncNombre" style="width:100%;"></div>
+  <div class="map-field"><label>RUT</label><input type="text" id="ncRut" style="width:100%;" oninput="autofillClientCode()"></div>
+  <div class="map-field"><label>Código de acceso</label><input type="text" id="ncCodigo" placeholder="Se sugiere con los primeros 5 dígitos del RUT" style="width:100%;font-family:var(--mono);text-transform:uppercase;" oninput="ncCodeManual=true"></div>
+  <div class="sub" style="margin:0 0 4px;">El cliente usará este código (sin PIN) para entrar y ver solo su propia información.</div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('newClientModal')">Cancelar</button><button class="btn-primary" id="ncConfirm">Crear cliente</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="fondoModal"><div class="modal" style="max-width:460px;">
+  <h3>Nuevo fondo por rendir</h3>
+  <div class="map-field"><label>Rendidor</label><input type="text" id="fRendidor" style="width:100%;"></div>
+  <div class="map-field"><label>Monto entregado</label><input type="number" id="fMonto" style="width:100%;"></div>
+  <div class="map-field"><label>Fecha entrega</label><input type="date" id="fFecha" style="width:100%;"></div>
+  <div class="map-field"><label>Motivo</label><input type="text" id="fMotivo" style="width:100%;"></div>
+  <div class="map-field"><label>Centro de costo</label><input type="text" id="fCentro" style="width:100%;"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('fondoModal')">Cancelar</button><button class="btn-primary" id="fondoConfirm">Crear fondo</button></div>
+</div></div>
+
+<div class="modal-overlay hidden" id="gastoModal"><div class="modal" style="max-width:460px;">
+  <h3>Agregar gasto rendido</h3>
+  <div class="sub" id="gastoModalSub"></div>
+  <div class="map-field"><label>Fecha</label><input type="date" id="gFecha" style="width:100%;"></div>
+  <div class="map-field"><label>Categoría</label>
+    <select id="gCategoria" style="width:100%;">
+      <option>Combustible</option><option>Alimentación</option><option>Transporte</option>
+      <option>Alojamiento</option><option>Insumos / Materiales</option><option>Servicios</option><option>Otros</option>
+    </select>
+  </div>
+  <div class="map-field"><label>Tipo documento</label>
+    <select id="gTipoDoc" style="width:100%;"><option>Factura</option><option>Boleta</option><option>Vale</option><option>Otro</option></select>
+  </div>
+  <div class="map-field"><label>Monto</label><input type="number" id="gMonto" style="width:100%;"></div>
+  <div class="map-field"><label>Glosa</label><input type="text" id="gGlosa" style="width:100%;"></div>
+  <div class="map-field"><label>Foto / PDF documento</label><input type="file" id="gArchivo" accept="image/*,.pdf" style="width:100%;"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal('gastoModal')">Cancelar</button><button class="btn-primary" id="gastoConfirm">Guardar gasto</button></div>
+</div></div>
+
+<script>
+/* ============================================================
+   CONFIG SUPABASE
+   ============================================================ */
+const SUPABASE_URL = 'https://einewayxqklnzpgephvi.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_KzYozkWUpBKVawJv2rM-0w_hd5X00Wm';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const LIBROS = {
+  compras: { label:'Compra', personLabel:'Proveedor', flow:'pagar', accion:'pago' },
+  ventas:  { label:'Venta',  personLabel:'Cliente',   flow:'cobrar', accion:'cobro' }
+};
+
+let session = { role:null, clientId:null, clientName:null, clientCode:null }; // role: 'office' | 'client'
+let cache = {
+  compras:{ invoices:[], bank:[], links:[] },
+  ventas:{ invoices:[], bank:[], links:[] },
+  fondos:[], gastosByFondo:{}
+};
+let pendingImport = null;
+let pendingMatch = null;
+
+function uid(){ return 'x'+Math.random().toString(36).slice(2)+Date.now().toString(36); }
+function formatCLP(n){ if (n===null||n===undefined||isNaN(n)) return '—'; return '$'+Math.round(n).toLocaleString('es-CL'); }
+function escapeHtml(s){ return (s===undefined||s===null?'':s.toString()).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+function normalizeHeader(h){ return (h===undefined||h===null?'':h.toString()).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim(); }
+function findHeaderIndex(headers, aliases){
+  const norm = headers.map(normalizeHeader);
+  for (const a of aliases){ const i = norm.indexOf(a); if (i>-1) return i; }
+  for (const a of aliases){ const i = norm.findIndex(h=>h.includes(a)); if (i>-1) return i; }
+  return -1;
+}
+function parseMonto(v){
+  if (typeof v==='number') return v;
+  if (!v) return 0;
+  let s = v.toString().trim().replace(/[^0-9,.\-]/g,'');
+  if (s.indexOf(',')>-1 && s.lastIndexOf('.')<s.indexOf(',')){ s = s.replace(/\./g,'').replace(',', '.'); }
+  else { s = s.replace(/,/g,''); }
+  const n = parseFloat(s); return isNaN(n)?0:n;
+}
+function parseFechaCell(v){
+  if (typeof v==='number'){ const d = XLSX.SSF.parse_date_code(v); if (d) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`; }
+  if (!v) return '';
+  const s = v.toString().trim();
+  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m){ let [_,d,mo,y]=m; if (y.length===2) y='20'+y; return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`; }
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  return s;
+}
+function estadoLabel(e){ return {pendiente:'Pendiente',pago_directo:'Pago directo',conciliado:'Conciliado',parcial:'Parcial'}[e]||e; }
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+function showOfficeLogin(){
+  openPinModal({
+    title:'Ingresar como oficina', sub:'Ingresa el PIN de la oficina contable (se define la primera vez).',
+    onConfirm: async (val)=>{
+      const savedPin = localStorage.getItem('office_pin');
+      if (!savedPin){
+        if (!val || val.length<4){ alert('El PIN debe tener al menos 4 caracteres.'); return; }
+        localStorage.setItem('office_pin', val);
+      } else if (val !== savedPin){ alert('PIN incorrecto.'); return; }
+      closeModal('pinModal');
+      session.role='office';
+      await showClientSelector();
+    }
+  });
+}
+function openPinModal({title,sub,onConfirm}){
+  document.getElementById('pinModalTitle').textContent = title;
+  document.getElementById('pinModalSub').textContent = sub;
+  document.getElementById('pinInput').value = '';
+  document.getElementById('pinModal').classList.remove('hidden');
+  document.getElementById('pinModalConfirm').onclick = ()=> onConfirm(document.getElementById('pinInput').value.trim());
+}
+function showClientLogin(){
+  document.getElementById('loginCard').innerHTML = `
+    <h1>Acceso cliente</h1>
+    <p>Ingresa el código que te entregó tu oficina contable.</p>
+    <input type="text" id="clientCodeInput" placeholder="Código de acceso" style="width:100%;text-align:center;font-family:var(--mono);text-transform:uppercase;">
+    <div style="margin-top:14px;"><button class="btn btn-primary" style="width:100%;" onclick="doClientLogin()">Entrar</button></div>
+    <button class="login-back" onclick="location.reload()">‹ Volver</button>
+  `;
+}
+async function doClientLogin(){
+  const code = document.getElementById('clientCodeInput').value.trim().toUpperCase();
+  if (!code){ return; }
+  const { data, error } = await sb.from('clients').select('*').eq('access_code', code).maybeSingle();
+  if (error || !data){ alert('Código no encontrado. Verifica con tu oficina contable.'); return; }
+  session.role='client'; session.clientId=data.id; session.clientName=data.nombre; session.clientCode=data.access_code;
+  await enterApp();
+}
+async function showClientSelector(){
+  const { data, error } = await sb.from('clients').select('*').order('nombre');
+  if (error){ alert('No se pudo conectar a Supabase: '+error.message); return; }
+  document.getElementById('loginCard').innerHTML = `
+    <h1>Selecciona un cliente</h1>
+    <p>Modo oficina contable</p>
+    <div class="client-list" id="clientListWrap">
+      ${data.length ? data.map(c=>`
+        <div class="client-row">
+          <div style="cursor:pointer;flex:1;" onclick="selectClient('${c.id}','${escapeHtml(c.nombre)}')"><b>${escapeHtml(c.nombre)}</b><br><span class="code">RUT ${escapeHtml(c.rut||'—')}</span></div>
+          <span class="code">${c.access_code}</span>
+          <button class="btn" style="padding:4px 8px;font-size:11px;margin-left:8px;" onclick="event.stopPropagation();editClientCode('${c.id}','${c.access_code}')">Cambiar código</button>
+        </div>`).join('') : `<div class="empty">Aún no hay clientes creados.</div>`}
+    </div>
+    <button class="btn btn-primary" style="width:100%;" onclick="openModal_newClient()">+ Nuevo cliente</button>
+    <button class="login-back" onclick="location.reload()">‹ Volver</button>
+  `;
+}
+function autofillClientCode(){
+  if (ncCodeManual) return;
+  const digits = document.getElementById('ncRut').value.replace(/\D/g,'').slice(0,5);
+  document.getElementById('ncCodigo').value = digits;
+}
+let ncCodeManual = false;
+function openModal_newClient(){
+  ncCodeManual = false;
+  document.getElementById('ncTitle').textContent = 'Nuevo cliente';
+  document.getElementById('ncNombre').closest('.map-field').style.display='flex';
+  document.getElementById('ncRut').closest('.map-field').style.display='flex';
+  document.getElementById('ncNombre').value=''; document.getElementById('ncRut').value=''; document.getElementById('ncCodigo').value='';
+  document.getElementById('newClientModal').classList.remove('hidden');
+  document.getElementById('ncConfirm').textContent = 'Crear cliente';
+  document.getElementById('ncConfirm').onclick = async ()=>{
+    const nombre = document.getElementById('ncNombre').value.trim();
+    const rut = document.getElementById('ncRut').value.trim();
+    let code = document.getElementById('ncCodigo').value.trim().toUpperCase();
+    if (!nombre){ alert('Ingresa un nombre.'); return; }
+    if (!code) code = Math.random().toString(36).slice(2,8).toUpperCase();
+    const { data, error } = await sb.from('clients').insert({nombre, rut, access_code:code}).select().single();
+    if (error){
+      if (error.message.includes('duplicate') || error.code==='23505') alert('Ese código de acceso ya está en uso por otro cliente. Elige otro.');
+      else alert('Error creando cliente: '+error.message);
+      return;
+    }
+    closeModal('newClientModal');
+    alert(`Cliente creado. Código de acceso para "${nombre}": ${code}\n\nEntrégaselo para que pueda ingresar a la app.`);
+    await showClientSelector();
+  };
+}
+function editClientCode(clientId, currentCode){
+  document.getElementById('ncTitle').textContent = 'Cambiar código de acceso';
+  document.getElementById('ncNombre').closest('.map-field').style.display='none';
+  document.getElementById('ncRut').closest('.map-field').style.display='none';
+  document.getElementById('ncCodigo').value = currentCode;
+  document.getElementById('newClientModal').classList.remove('hidden');
+  document.getElementById('ncConfirm').textContent = 'Guardar código';
+  document.getElementById('ncConfirm').onclick = async ()=>{
+    let code = document.getElementById('ncCodigo').value.trim().toUpperCase();
+    if (!code){ alert('Ingresa un código.'); return; }
+    const { error } = await sb.from('clients').update({access_code:code}).eq('id', clientId);
+    document.getElementById('ncNombre').closest('.map-field').style.display='flex';
+    document.getElementById('ncRut').closest('.map-field').style.display='flex';
+    if (error){
+      if (error.message.includes('duplicate') || error.code==='23505') alert('Ese código ya está en uso por otro cliente. Elige otro.');
+      else alert('Error: '+error.message);
+      return;
+    }
+    closeModal('newClientModal');
+    alert(`Código actualizado a: ${code}`);
+    await showClientSelector();
+  };
+}
+async function selectClient(id, nombre){
+  session.clientId = id; session.clientName = nombre;
+  await enterApp();
+}
+function backToClientSelector(){
+  document.getElementById('appRoot').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  showClientSelector();
+}
+function logout(){ session={role:null,clientId:null,clientName:null,clientCode:null}; location.reload(); }
+
+async function enterApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appRoot').style.display='block';
+  const badge = document.getElementById('clientBadge');
+  badge.innerHTML = `<span class="role ${session.role}">${session.role==='office'?'Oficina':'Cliente'}</span> ${escapeHtml(session.clientName)}`;
+  document.getElementById('switchClientBtn').style.display = session.role==='office' ? 'inline-block':'none';
+  await loadClientData();
+  renderAll();
+}
+
+/* ============================================================
+   DATA LOADING
+   ============================================================ */
+async function loadClientData(){
+  const cid = session.clientId;
+  const [invRes, bankRes, linkRes, fondoRes] = await Promise.all([
+    sb.from('invoices').select('*').eq('client_id', cid).order('fecha'),
+    sb.from('bank_txns').select('*').eq('client_id', cid).order('fecha'),
+    sb.from('invoice_bank_links').select('*'),
+    sb.from('fondos').select('*').eq('client_id', cid).order('fecha_entrega', {ascending:false}),
+  ]);
+  cache.compras.invoices = (invRes.data||[]).filter(i=>i.libro==='compras');
+  cache.ventas.invoices  = (invRes.data||[]).filter(i=>i.libro==='ventas');
+  cache.compras.bank = (bankRes.data||[]).filter(b=>b.libro==='compras');
+  cache.ventas.bank  = (bankRes.data||[]).filter(b=>b.libro==='ventas');
+  const allInvoiceIds = new Set((invRes.data||[]).map(i=>i.id));
+  cache.compras.links = (linkRes.data||[]).filter(l=>cache.compras.invoices.some(i=>i.id===l.invoice_id));
+  cache.ventas.links  = (linkRes.data||[]).filter(l=>cache.ventas.invoices.some(i=>i.id===l.invoice_id));
+  cache.fondos = fondoRes.data||[];
+  if (cache.fondos.length){
+    const { data: gastos } = await sb.from('gastos').select('*').in('fondo_id', cache.fondos.map(f=>f.id)).order('fecha');
+    cache.gastosByFondo = {};
+    (gastos||[]).forEach(g=>{ (cache.gastosByFondo[g.fondo_id] = cache.gastosByFondo[g.fondo_id]||[]).push(g); });
+  } else { cache.gastosByFondo = {}; }
+}
+
+/* ============================================================
+   TABS
+   ============================================================ */
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if (name==='reportes') renderReportes();
+}
+function renderAll(){
+  renderLibroPanel('compras');
+  renderLibroPanel('ventas');
+  renderFondosPanel();
+  if (document.getElementById('panel-reportes').classList.contains('active')) renderReportes();
+}
+
+/* ============================================================
+   LIBRO PANEL (compras / ventas)
+   ============================================================ */
+function renderLibroPanel(libro){
+  const cfg = LIBROS[libro];
+  const data = cache[libro];
+  const isOffice = session.role==='office';
+  const pend = data.invoices.filter(i=>i.estado==='pendiente').length;
+  const resuelto = data.invoices.length - pend;
+  const totalMonto = data.invoices.reduce((s,i)=>s+i.monto,0);
+  const linkedBankIds = new Set(data.links.map(l=>l.bank_txn_id));
+  const unmatchedBank = data.bank.filter(b=>!linkedBankIds.has(b.id));
+
+  const html = `
+    ${!isOffice ? `<div class="locked-note no-print">Estás en modo cliente (solo lectura): puedes revisar el listado y los reportes. La carga de libros, pagos y conciliación las gestiona tu oficina contable.</div>` : ''}
+    <div class="stat-row">
+      <div class="stat"><div class="lbl">Documentos</div><div class="val">${data.invoices.length}</div></div>
+      <div class="stat"><div class="lbl">Monto total</div><div class="val">${formatCLP(totalMonto)}</div></div>
+      <div class="stat pend"><div class="lbl">Pendientes</div><div class="val">${pend}</div></div>
+      <div class="stat ok"><div class="lbl">Resueltos</div><div class="val">${resuelto}</div></div>
+    </div>
+    ${isOffice ? `
+    <div class="card">
+      <h2>1. Libro de ${cfg.label}s (SII)</h2>
+      <div class="sub">Sube el registro de ${cfg.label.toLowerCase()}s exportado del SII (.csv, .xls o .xlsx).</div>
+      <div class="drop" onclick="document.getElementById('inv-${libro}').click()" ondrop="handleDrop(event,'${libro}','invoices')" ondragover="event.preventDefault()">
+        📄 Arrastra el archivo aquí o haz clic para seleccionar
+        <div class="hint">Formatos: CSV, XLS, XLSX</div>
+      </div>
+      <input type="file" id="inv-${libro}" accept=".csv,.xls,.xlsx" style="display:none" onchange="handleFile(event,'${libro}','invoices')">
+    </div>
+    <div class="card">
+      <h2>2. Registrar ${cfg.accion}</h2>
+      <div class="grid2">
+        <div><b style="font-size:13px;">Opción A · Pago directo</b><p class="sub" style="margin:6px 0 10px;">Selecciona documentos en la tabla y usa "Marcar pago directo".</p></div>
+        <div>
+          <b style="font-size:13px;">Opción B · Cartola bancaria</b>
+          <div class="drop" style="margin-top:8px;" onclick="document.getElementById('bank-${libro}').click()" ondrop="handleDrop(event,'${libro}','bank')" ondragover="event.preventDefault()">🏦 Subir cartola</div>
+          <input type="file" id="bank-${libro}" accept=".csv,.xls,.xlsx" style="display:none" onchange="handleFile(event,'${libro}','bank')">
+          ${data.bank.length ? `<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="sub" style="margin:0;">${data.bank.length} movimientos · ${unmatchedBank.length} sin conciliar</span><button class="btn btn-primary" onclick="autoConciliar('${libro}')">Conciliar automáticamente</button></div>` : ''}
+        </div>
+      </div>
+      ${unmatchedBank.length ? renderUnmatchedBank(libro, unmatchedBank) : ''}
+    </div>` : ''}
+    <div class="card">
+      <h2>Listado de documentos</h2>
+      <div class="actions-bar no-print">
+        <select id="filter-${libro}" onchange="renderAll()">
+          <option value="todos">Todos los estados</option>
+          <option value="pendiente">Pendientes</option>
+          <option value="pago_directo">Pago directo</option>
+          <option value="conciliado">Conciliado</option>
+        </select>
+        ${isOffice ? `<button class="btn" onclick="selectAllRows('${libro}')">Seleccionar todo (visible)</button><button class="btn-primary" onclick="openPayModal('${libro}')">Marcar pago directo</button>` : ''}
+      </div>
+      ${renderInvoiceTable(libro)}
+    </div>
+  `;
+  document.getElementById('panel-'+libro).innerHTML = html;
+}
+function renderUnmatchedBank(libro, list){
+  return `
+    <div style="margin-top:14px;">
+      <b style="font-size:13px;">Movimientos bancarios sin conciliar (${list.length})</b>
+      <div class="table-wrap" style="max-height:220px;margin-top:8px;">
+        <table><thead><tr><th>Fecha</th><th>Descripción</th><th>Monto</th><th></th></tr></thead>
+        <tbody>${list.map(b=>`<tr><td class="mono">${b.fecha||'—'}</td><td>${escapeHtml(b.descripcion||'')}</td><td class="num">${formatCLP(b.monto)}</td><td><button class="btn" onclick="openMatchModal('${libro}','${b.id}')">Conciliar</button></td></tr>`).join('')}</tbody></table>
+      </div>
+    </div>`;
+}
+function renderInvoiceTable(libro){
+  const cfg = LIBROS[libro];
+  const data = cache[libro];
+  const filter = document.getElementById('filter-'+libro)?.value || 'todos';
+  let rows = data.invoices;
+  if (filter!=='todos') rows = rows.filter(i=>i.estado===filter);
+  if (!rows.length) return `<div class="empty"><b>Sin documentos que mostrar</b>Sube el libro de ${cfg.label.toLowerCase()}s del SII para comenzar.</div>`;
+  return `
+    <div class="table-wrap"><table>
+      <thead><tr>${session.role==='office'?'<th class="no-print"><input type="checkbox" onclick="toggleAllCheckboxes(\''+libro+'\',this)"></th>':''}<th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th>Estado</th></tr></thead>
+      <tbody>${rows.map(inv=>`<tr>
+        ${session.role==='office'?`<td class="no-print"><input type="checkbox" class="rowchk-${libro}" value="${inv.id}"></td>`:''}
+        <td>${escapeHtml(inv.tipo_doc||'—')}</td><td class="mono">${escapeHtml(inv.rut||'—')}</td><td>${escapeHtml(inv.razon_social||'—')}</td>
+        <td class="mono">${escapeHtml(inv.folio||'—')}</td><td class="mono">${inv.fecha||'—'}</td><td class="num">${formatCLP(inv.monto)}</td>
+        <td><span class="badge ${inv.estado}">${estadoLabel(inv.estado)}</span></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+function toggleAllCheckboxes(libro, master){ document.querySelectorAll('.rowchk-'+libro).forEach(c=>c.checked=master.checked); }
+function selectAllRows(libro){ document.querySelectorAll('.rowchk-'+libro).forEach(c=>c.checked=true); }
+function getSelectedIds(libro){ return Array.from(document.querySelectorAll('.rowchk-'+libro+':checked')).map(c=>c.value); }
+
+/* ============================================================
+   FILE IMPORT
+   ============================================================ */
+function requireOffice(){ if (session.role!=='office'){ alert('Esta acción solo está disponible para la oficina contable.'); return false; } return true; }
+function handleDrop(ev, libro, kind){ ev.preventDefault(); if(!requireOffice())return; const f=ev.dataTransfer.files[0]; if(f) readFile(f,libro,kind); }
+function handleFile(ev, libro, kind){ if(!requireOffice()){ev.target.value='';return;} const f=ev.target.files[0]; if(f) readFile(f,libro,kind); ev.target.value=''; }
+function readFile(file, libro, kind){
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {header:1, raw:true, defval:''});
+      if (!rows.length){ alert('El archivo está vacío.'); return; }
+      const headers = rows[0].map(h=>h.toString());
+      const dataRows = rows.slice(1).filter(r=>r.some(c=>c!==''&&c!==null&&c!==undefined));
+      if (kind==='invoices') openInvoiceMapping(libro, headers, dataRows);
+      else openBankMapping(libro, headers, dataRows);
+    }catch(err){ alert('No se pudo leer el archivo.\n'+err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function openInvoiceMapping(libro, headers, rows){
+  const cfg = LIBROS[libro];
+  const guesses = {
+    tipoDoc: findHeaderIndex(headers,['tipo doc','tipo documento']),
+    rut: findHeaderIndex(headers,['rut proveedor','rut cliente','rut']),
+    razonSocial: findHeaderIndex(headers,['razon social','nombre o razon social','proveedor','cliente','nombre']),
+    folio: findHeaderIndex(headers,['folio']),
+    fecha: findHeaderIndex(headers,['fecha docto','fecha documento','fecha emision','fecha']),
+    monto: findHeaderIndex(headers,['monto total','monto liquido total','total','monto total documento']),
+  };
+  const fields = [{key:'tipoDoc',label:'Tipo de documento'},{key:'rut',label:'RUT'},{key:'razonSocial',label:'Razón social'},{key:'folio',label:'Folio'},{key:'fecha',label:'Fecha'},{key:'monto',label:'Monto total'}];
+  document.getElementById('mapModalTitle').textContent = `Confirmar columnas · Libro de ${cfg.label}s`;
+  document.getElementById('mapModalSub').textContent = `${rows.length} filas detectadas.`;
+  document.getElementById('mapModalBody').innerHTML = fields.map(f=>`
+    <div class="map-field"><label>${f.label}</label><select id="map_${f.key}"><option value="-1">— No usar —</option>
+    ${headers.map((h,i)=>`<option value="${i}" ${guesses[f.key]===i?'selected':''}>${escapeHtml(h||'(columna '+(i+1)+')')}</option>`).join('')}</select></div>`).join('');
+  document.getElementById('mapModal').classList.remove('hidden');
+  document.getElementById('mapModalConfirm').onclick = async ()=>{
+    const map = {}; fields.forEach(f=> map[f.key]=parseInt(document.getElementById('map_'+f.key).value));
+    if (map.monto===-1){ alert('Debes seleccionar la columna de monto.'); return; }
+    const invoices = rows.map(r=>({
+      client_id: session.clientId, libro,
+      tipo_doc: map.tipoDoc>-1?(r[map.tipoDoc]??'').toString():'',
+      rut: map.rut>-1?(r[map.rut]??'').toString():'',
+      razon_social: map.razonSocial>-1?(r[map.razonSocial]??'').toString():'',
+      folio: map.folio>-1?(r[map.folio]??'').toString():'',
+      fecha: map.fecha>-1?parseFechaCell(r[map.fecha]):null,
+      monto: Math.round(parseMonto(r[map.monto])),
+      estado:'pendiente'
+    })).filter(inv=>inv.monto>0);
+    const btn = document.getElementById('mapModalConfirm'); btn.disabled=true; btn.textContent='Importando...';
+    const { error } = await sb.from('invoices').insert(invoices);
+    btn.disabled=false; btn.textContent='Confirmar e importar';
+    if (error){ alert('Error al importar: '+error.message); return; }
+    await loadClientData(); closeModal('mapModal'); renderAll();
+    alert(`${invoices.length} documentos importados al libro de ${cfg.label.toLowerCase()}s.`);
+  };
+}
+function openBankMapping(libro, headers, rows){
+  const guesses = { fecha: findHeaderIndex(headers,['fecha']), desc: findHeaderIndex(headers,['descripcion','detalle','glosa']),
+    monto: findHeaderIndex(headers,['monto']), cargo: findHeaderIndex(headers,['cargo','giro']), abono: findHeaderIndex(headers,['abono','deposito']) };
+  const flow = LIBROS[libro].flow;
+  document.getElementById('mapModalTitle').textContent = 'Confirmar columnas · Cartola bancaria';
+  document.getElementById('mapModalSub').textContent = `${rows.length} movimientos detectados.`;
+  document.getElementById('mapModalBody').innerHTML = `
+    <div class="map-field"><label>Fecha</label><select id="bmap_fecha">${headers.map((h,i)=>`<option value="${i}" ${guesses.fecha===i?'selected':''}>${escapeHtml(h)}</option>`).join('')}</select></div>
+    <div class="map-field"><label>Descripción</label><select id="bmap_desc"><option value="-1">— No usar —</option>${headers.map((h,i)=>`<option value="${i}" ${guesses.desc===i?'selected':''}>${escapeHtml(h)}</option>`).join('')}</select></div>
+    <div class="map-field"><label>Formato de monto</label><select id="bmap_mode" onchange="toggleBankMode()"><option value="single">Una columna "Monto"</option><option value="split">Columnas Cargo / Abono</option></select></div>
+    <div id="bmap_single_wrap" class="map-field"><label>Columna monto</label><select id="bmap_monto">${headers.map((h,i)=>`<option value="${i}" ${guesses.monto===i?'selected':''}>${escapeHtml(h)}</option>`).join('')}</select></div>
+    <div id="bmap_split_wrap" style="display:none;">
+      <div class="map-field"><label>Columna Cargo</label><select id="bmap_cargo"><option value="-1">— No hay —</option>${headers.map((h,i)=>`<option value="${i}" ${guesses.cargo===i?'selected':''}>${escapeHtml(h)}</option>`).join('')}</select></div>
+      <div class="map-field"><label>Columna Abono</label><select id="bmap_abono"><option value="-1">— No hay —</option>${headers.map((h,i)=>`<option value="${i}" ${guesses.abono===i?'selected':''}>${escapeHtml(h)}</option>`).join('')}</select></div>
+    </div>
+    <p class="sub" style="margin-top:10px;">Este libro es de <b>${flow==='pagar'?'pagos (cargos)':'cobros (abonos)'}</b>.</p>`;
+  if (guesses.cargo>-1 || guesses.abono>-1){ document.getElementById('bmap_mode').value='split'; toggleBankMode(); }
+  document.getElementById('mapModal').classList.remove('hidden');
+  document.getElementById('mapModalConfirm').onclick = async ()=>{
+    const fecha = parseInt(document.getElementById('bmap_fecha').value);
+    const desc = parseInt(document.getElementById('bmap_desc').value);
+    const mode = document.getElementById('bmap_mode').value;
+    let txns = [];
+    if (mode==='single'){ const mi=parseInt(document.getElementById('bmap_monto').value); txns = rows.map(r=>({monto:parseMonto(r[mi]), fecha:parseFechaCell(r[fecha]), descripcion: desc>-1?(r[desc]??'').toString():''})); }
+    else { const ci=parseInt(document.getElementById('bmap_cargo').value); const ai=parseInt(document.getElementById('bmap_abono').value); const useIdx = flow==='pagar'?ci:ai;
+      if (useIdx===-1){ alert('Selecciona la columna correspondiente.'); return; }
+      txns = rows.map(r=>({monto:parseMonto(r[useIdx]), fecha:parseFechaCell(r[fecha]), descripcion: desc>-1?(r[desc]??'').toString():''})); }
+    const clean = txns.filter(t=>Math.abs(t.monto)>0).map(t=>({ client_id:session.clientId, libro, fecha:t.fecha||null, descripcion:t.descripcion, monto:Math.round(Math.abs(t.monto)) }));
+    const btn = document.getElementById('mapModalConfirm'); btn.disabled=true; btn.textContent='Importando...';
+    const { error } = await sb.from('bank_txns').insert(clean);
+    btn.disabled=false; btn.textContent='Confirmar e importar';
+    if (error){ alert('Error al importar: '+error.message); return; }
+    await loadClientData(); closeModal('mapModal'); renderAll();
+    alert(`${clean.length} movimientos de cartola importados.`);
+  };
+}
+function toggleBankMode(){ const mode=document.getElementById('bmap_mode').value; document.getElementById('bmap_single_wrap').style.display=mode==='single'?'flex':'none'; document.getElementById('bmap_split_wrap').style.display=mode==='split'?'block':'none'; }
+
+/* ============================================================
+   PAGO DIRECTO
+   ============================================================ */
+function openPayModal(libro){
+  if (!requireOffice()) return;
+  const ids = getSelectedIds(libro);
+  if (!ids.length){ alert('Selecciona al menos un documento en la tabla.'); return; }
+  const invs = cache[libro].invoices.filter(i=>ids.includes(i.id) && i.estado==='pendiente');
+  if (!invs.length){ alert('Los documentos seleccionados ya no están pendientes.'); return; }
+  const total = invs.reduce((s,i)=>s+i.monto,0);
+  document.getElementById('payModalSub').textContent = `${invs.length} documento(s) · Monto total ${formatCLP(total)}`;
+  document.getElementById('payDate').value = new Date().toISOString().slice(0,10);
+  document.getElementById('payAmount').value = total;
+  document.getElementById('payModal').classList.remove('hidden');
+  document.getElementById('payModalConfirm').onclick = async ()=>{
+    const fecha = document.getElementById('payDate').value;
+    const monto = parseFloat(document.getElementById('payAmount').value)||total;
+    const { error } = await sb.from('invoices').update({estado:'pago_directo', pago_fecha:fecha, pago_monto: monto/invs.length}).in('id', invs.map(i=>i.id));
+    if (error){ alert('Error: '+error.message); return; }
+    await loadClientData(); closeModal('payModal'); renderAll();
+  };
+}
+
+/* ============================================================
+   CONCILIACION
+   ============================================================ */
+async function autoConciliar(libro){
+  if (!requireOffice()) return;
+  const data = cache[libro];
+  const pendInv = data.invoices.filter(i=>i.estado==='pendiente');
+  const linkedBankIds = new Set(data.links.map(l=>l.bank_txn_id));
+  const unmatchedBank = data.bank.filter(b=>!linkedBankIds.has(b.id));
+  const byMonto = {};
+  pendInv.forEach(i=>{ (byMonto[i.monto]=byMonto[i.monto]||[]).push(i); });
+  const invoiceIds = []; const links = [];
+  unmatchedBank.forEach(tx=>{
+    const cands = byMonto[tx.monto];
+    if (cands && cands.length===1){ invoiceIds.push(cands[0].id); links.push({invoice_id:cands[0].id, bank_txn_id:tx.id}); byMonto[tx.monto]=[]; }
+  });
+  if (!invoiceIds.length){ alert('No se encontraron coincidencias únicas automáticas. Usa "Conciliar" en cada movimiento para asignación manual.'); return; }
+  const { error: e1 } = await sb.from('invoices').update({estado:'conciliado'}).in('id', invoiceIds);
+  const { error: e2 } = await sb.from('invoice_bank_links').insert(links);
+  if (e1||e2){ alert('Error al conciliar: '+((e1||e2).message)); return; }
+  await loadClientData(); renderAll();
+  alert(`${invoiceIds.length} documento(s) conciliados automáticamente. Revisa los movimientos restantes para conciliación manual.`);
+}
+function openMatchModal(libro, bankTxnId){
+  if (!requireOffice()) return;
+  const tx = cache[libro].bank.find(b=>b.id===bankTxnId);
+  const pend = cache[libro].invoices.filter(i=>i.estado==='pendiente');
+  pendingMatch = {libro, bankTxnId};
+  document.getElementById('matchModalSub').textContent = `Movimiento: ${tx.fecha||''} · ${escapeHtml(tx.descripcion||'')} · ${formatCLP(tx.monto)}.`;
+  document.getElementById('matchList').innerHTML = pend.length ? pend.map(inv=>`
+    <div class="match-item"><input type="checkbox" data-invid="${inv.id}" data-monto="${inv.monto}" onchange="updateMatchSum()">
+    <span class="mono" style="min-width:80px;">${inv.fecha||''}</span><span style="flex:1;">${escapeHtml(inv.razon_social||inv.rut||'')} · Folio ${escapeHtml(inv.folio||'—')}</span>
+    <span class="num">${formatCLP(inv.monto)}</span></div>`).join('') : `<div class="empty">No hay documentos pendientes.</div>`;
+  document.getElementById('matchModal').classList.remove('hidden');
+  updateMatchSum();
+  document.getElementById('matchModalConfirm').onclick = confirmMatch;
+}
+function updateMatchSum(){
+  const tx = cache[pendingMatch.libro].bank.find(b=>b.id===pendingMatch.bankTxnId);
+  const checked = Array.from(document.querySelectorAll('#matchList input:checked'));
+  const sum = checked.reduce((s,c)=>s+parseFloat(c.dataset.monto),0);
+  const diff = tx.monto - sum;
+  const el = document.getElementById('matchSum');
+  el.className = 'match-sum ' + (diff===0 && checked.length ? 'ok':'bad');
+  el.innerHTML = `<span>Movimiento: ${formatCLP(tx.monto)}</span><span>Seleccionado: ${formatCLP(sum)} ${checked.length?(diff===0?'✓ coincide':'· diferencia '+formatCLP(diff)):''}</span>`;
+  document.getElementById('matchModalConfirm').disabled = checked.length===0;
+}
+async function confirmMatch(){
+  const tx = cache[pendingMatch.libro].bank.find(b=>b.id===pendingMatch.bankTxnId);
+  const checked = Array.from(document.querySelectorAll('#matchList input:checked'));
+  const ids = checked.map(c=>c.dataset.invid);
+  const sum = checked.reduce((s,c)=>s+parseFloat(c.dataset.monto),0);
+  const exact = sum === tx.monto;
+  const { error: e1 } = await sb.from('invoices').update({estado: exact?'conciliado':'parcial'}).in('id', ids);
+  const { error: e2 } = await sb.from('invoice_bank_links').insert(ids.map(id=>({invoice_id:id, bank_txn_id:tx.id})));
+  if (e1||e2){ alert('Error: '+((e1||e2).message)); return; }
+  await loadClientData(); closeModal('matchModal'); renderAll();
+}
+
+/* ============================================================
+   FONDOS POR RENDIR
+   ============================================================ */
+function renderFondosPanel(){
+  const isOffice = session.role==='office';
+  const html = `
+    ${!isOffice ? `<div class="locked-note no-print">Puedes agregar gastos con su comprobante a los fondos vigentes. La creación de nuevos fondos la gestiona tu oficina contable.</div>` : ''}
+    <div class="card">
+      <h2>Fondos por rendir</h2>
+      <div class="sub">Anticipos entregados y sus rendiciones de gastos, con foto del comprobante.</div>
+      ${isOffice ? `<button class="btn btn-primary" onclick="openFondoModalNew()">+ Nuevo fondo</button>` : ''}
+      <div style="margin-top:14px;">
+        ${cache.fondos.length ? cache.fondos.map(f=>renderFondoCard(f)).join('') : `<div class="empty"><b>Sin fondos registrados</b>${isOffice ? 'Crea un fondo por rendir para comenzar.' : 'Tu oficina contable aún no ha registrado un fondo.'}</div>`}
+      </div>
+    </div>
+  `;
+  document.getElementById('panel-fondos').innerHTML = html;
+}
+function renderFondoCard(f){
+  const gastos = cache.gastosByFondo[f.id] || [];
+  const totalRendido = gastos.reduce((s,g)=>s+g.monto,0);
+  const saldo = f.monto_entregado - totalRendido;
+  return `
+    <div class="fondo-card">
+      <div class="fondo-head"><b>${escapeHtml(f.rendidor)}</b><span class="mono" style="font-size:12px;color:#7A756A;">Entregado ${f.fecha_entrega}</span></div>
+      <div class="fondo-meta">${escapeHtml(f.motivo||'Sin motivo especificado')}${f.centro_costo ? ' · Centro de costo: '+escapeHtml(f.centro_costo):''}</div>
+      <div class="fondo-stats">
+        <span>Entregado<b>${formatCLP(f.monto_entregado)}</b></span>
+        <span>Rendido<b>${formatCLP(totalRendido)}</b></span>
+        <span style="color:${saldo<0?'var(--rust)':'var(--teal)'}">${saldo<0?'A reembolsar al rendidor':'Saldo por rendir / devolver'}<b>${formatCLP(Math.abs(saldo))}</b></span>
+      </div>
+      <div class="table-wrap" style="max-height:220px;">
+        <table><thead><tr><th>Fecha</th><th>Categoría</th><th>Glosa</th><th class="num">Monto</th><th>Doc.</th><th>Ingresado por</th><th></th></tr></thead>
+        <tbody>${gastos.length ? gastos.map(g=>{
+          const canEdit = session.role==='office' || (session.role==='client' && g.ingresado_por==='cliente');
+          return `<tr>
+          <td class="mono">${g.fecha}</td><td>${escapeHtml(g.categoria||'—')}</td><td>${escapeHtml(g.glosa||'')}</td>
+          <td class="num">${formatCLP(g.monto)}</td>
+          <td>${g.documento_url ? `<a class="doc-link" href="${g.documento_url}" target="_blank">${escapeHtml(g.documento_tipo||'Ver')}</a>` : '—'}</td>
+          <td>${g.ingresado_por==='oficina'?'Oficina':'Cliente'}</td>
+          <td>${canEdit ? `<div class="row-actions"><button class="btn" style="padding:3px 8px;font-size:11px;" onclick="openGastoModal('${f.id}','${g.id}')">Editar</button><button class="btn" style="padding:3px 8px;font-size:11px;" onclick="deleteGasto('${g.id}')">Eliminar</button></div>` : ''}</td>
+        </tr>`;}).join('') : `<tr><td colspan="7" style="text-align:center;color:#8A8578;">Sin gastos rendidos aún</td></tr>`}</tbody></table>
+      </div>
+      <div style="margin-top:10px;"><button class="btn" onclick="openGastoModal('${f.id}')">+ Agregar gasto</button></div>
+    </div>`;
+}
+async function deleteGasto(gastoId){
+  const fondoId = Object.keys(cache.gastosByFondo).find(fid => (cache.gastosByFondo[fid]||[]).some(g=>g.id===gastoId));
+  const g = fondoId ? cache.gastosByFondo[fondoId].find(x=>x.id===gastoId) : null;
+  const canEdit = g && (session.role==='office' || (session.role==='client' && g.ingresado_por==='cliente'));
+  if (!canEdit){ alert('No tienes permiso para eliminar este gasto.'); return; }
+  if (!confirm('¿Eliminar este gasto de la rendición? Esta acción no se puede deshacer.')) return;
+  const { error } = await sb.from('gastos').delete().eq('id', gastoId);
+  if (error){ alert('Error al eliminar: '+error.message); return; }
+  await loadClientData(); renderAll();
+}
+function openFondoModalNew(){
+  if (!requireOffice()) return;
+  ['fRendidor','fMonto','fMotivo','fCentro'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('fFecha').value = new Date().toISOString().slice(0,10);
+  document.getElementById('fondoModal').classList.remove('hidden');
+  document.getElementById('fondoConfirm').onclick = async ()=>{
+    const rendidor = document.getElementById('fRendidor').value.trim();
+    const monto = parseFloat(document.getElementById('fMonto').value);
+    const fecha = document.getElementById('fFecha').value;
+    const motivo = document.getElementById('fMotivo').value.trim();
+    const centro = document.getElementById('fCentro').value.trim();
+    if (!rendidor || !monto || !fecha){ alert('Completa rendidor, monto y fecha.'); return; }
+    const { error } = await sb.from('fondos').insert({client_id:session.clientId, rendidor, monto_entregado:monto, fecha_entrega:fecha, motivo, centro_costo:centro});
+    if (error){ alert('Error: '+error.message); return; }
+    await loadClientData(); closeModal('fondoModal'); renderAll();
+  };
+}
+function openGastoModal(fondoId, gastoId){
+  const f = cache.fondos.find(x=>x.id===fondoId);
+  const existing = gastoId ? (cache.gastosByFondo[fondoId]||[]).find(g=>g.id===gastoId) : null;
+  if (existing){
+    const canEdit = session.role==='office' || (session.role==='client' && existing.ingresado_por==='cliente');
+    if (!canEdit){ alert('No tienes permiso para editar este gasto.'); return; }
+  }
+  document.getElementById('gastoModalSub').innerHTML = `Fondo de ${escapeHtml(f.rendidor)} · ${formatCLP(f.monto_entregado)} entregados` +
+    (existing && existing.documento_url ? `<br>Documento actual: <a class="doc-link" href="${existing.documento_url}" target="_blank">ver adjunto</a> (sube uno nuevo para reemplazarlo)` : '');
+  document.querySelector('#gastoModal h3').textContent = existing ? 'Editar gasto rendido' : 'Agregar gasto rendido';
+  document.getElementById('gFecha').value = existing ? existing.fecha : new Date().toISOString().slice(0,10);
+  document.getElementById('gCategoria').value = existing ? (existing.categoria||'Combustible') : 'Combustible';
+  document.getElementById('gTipoDoc').value = existing ? (existing.documento_tipo||'Factura') : 'Factura';
+  document.getElementById('gMonto').value = existing ? existing.monto : '';
+  document.getElementById('gGlosa').value = existing ? (existing.glosa||'') : '';
+  document.getElementById('gArchivo').value = '';
+  document.getElementById('gastoModal').classList.remove('hidden');
+  const btn = document.getElementById('gastoConfirm');
+  btn.disabled = false; btn.textContent = existing ? 'Guardar cambios' : 'Guardar gasto';
+  btn.onclick = async ()=>{
+    const fecha = document.getElementById('gFecha').value;
+    const categoria = document.getElementById('gCategoria').value;
+    const tipoDoc = document.getElementById('gTipoDoc').value;
+    const monto = parseFloat(document.getElementById('gMonto').value);
+    const glosa = document.getElementById('gGlosa').value.trim();
+    const file = document.getElementById('gArchivo').files[0];
+    if (!fecha || !monto){ alert('Completa fecha y monto.'); return; }
+    btn.disabled = true; btn.innerHTML = 'Guardando... <span class="spin"></span>';
+    let documentoUrl = existing ? existing.documento_url : null;
+    if (file){
+      const path = `${session.clientId}/${fondoId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_')}`;
+      const { error: upErr } = await sb.storage.from('comprobantes').upload(path, file, {cacheControl:'3600', upsert:false});
+      if (upErr){ alert('Error subiendo el documento: '+upErr.message); btn.disabled=false; btn.textContent=existing?'Guardar cambios':'Guardar gasto'; return; }
+      documentoUrl = sb.storage.from('comprobantes').getPublicUrl(path).data.publicUrl;
+    }
+    let error;
+    if (existing){
+      ({ error } = await sb.from('gastos').update({ fecha, categoria, monto, glosa, documento_url: documentoUrl, documento_tipo: tipoDoc }).eq('id', existing.id));
+    } else {
+      ({ error } = await sb.from('gastos').insert({
+        fondo_id: fondoId, fecha, categoria, monto, glosa,
+        documento_url: documentoUrl, documento_tipo: tipoDoc,
+        ingresado_por: session.role==='office' ? 'oficina' : 'cliente'
+      }));
+    }
+    btn.disabled = false; btn.textContent = existing ? 'Guardar cambios' : 'Guardar gasto';
+    if (error){ alert('Error: '+error.message); return; }
+    await loadClientData(); closeModal('gastoModal'); renderAll();
+  };
+}
+
+/* ============================================================
+   REPORTES
+   ============================================================ */
+function printOnly(section){
+  document.body.classList.add('print-only-'+section);
+  window.print();
+}
+window.onafterprint = function(){
+  document.body.classList.remove('print-only-compras','print-only-ventas','print-only-fondos');
+};
+function renderReportes(){
+  document.getElementById('reporte-compras').innerHTML = renderReporteLibro('compras');
+  document.getElementById('reporte-ventas').innerHTML = renderReporteLibro('ventas');
+  document.getElementById('reporte-fondos').innerHTML = renderReporteFondos();
+}
+function renderReporteLibro(libro){
+  const cfg = LIBROS[libro];
+  const data = cache[libro].invoices;
+  const filter = document.getElementById('repfilter-'+libro)?.value || 'todos';
+  let rows = data;
+  if (filter!=='todos') rows = rows.filter(i=>i.estado===filter);
+  const total = data.reduce((s,i)=>s+i.monto,0);
+  const pend = data.filter(i=>i.estado==='pendiente');
+  const pendMonto = pend.reduce((s,i)=>s+i.monto,0);
+  const pagadoMonto = data.filter(i=>i.estado!=='pendiente').reduce((s,i)=>s+i.monto,0);
+  const pctConc = data.length ? Math.round((data.length-pend.length)/data.length*100) : 0;
+  return `
+    <div class="card">
+      <h2>${cfg.flow==='pagar'?'Cuentas por Pagar':'Cuentas por Cobrar'} — Libro de ${cfg.label}s</h2>
+      <div class="sub">Cliente: ${escapeHtml(session.clientName)}</div>
+      <div class="stat-row">
+        <div class="stat"><div class="lbl">Documentos</div><div class="val">${data.length}</div></div>
+        <div class="stat"><div class="lbl">Monto total</div><div class="val">${formatCLP(total)}</div></div>
+        <div class="stat pend"><div class="lbl">${cfg.flow==='pagar'?'Por pagar':'Por cobrar'}</div><div class="val">${formatCLP(pendMonto)}</div></div>
+        <div class="stat ok"><div class="lbl">${cfg.flow==='pagar'?'Pagado':'Cobrado'}</div><div class="val">${formatCLP(pagadoMonto)}</div></div>
+        <div class="stat ok"><div class="lbl">% resuelto</div><div class="val">${pctConc}%</div></div>
+      </div>
+      <div class="actions-bar no-print">
+        <select id="repfilter-${libro}" onchange="renderReportes()">
+          <option value="todos">Todos</option><option value="pendiente">Pendientes</option><option value="pago_directo">Pago directo</option><option value="conciliado">Conciliado</option><option value="parcial">Parcial</option>
+        </select>
+        <button class="btn" onclick="exportExcel('${libro}')">Exportar a Excel</button>
+        <button class="btn" onclick="printOnly('${libro}')">Imprimir / PDF</button>
+      </div>
+      ${rows.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Tipo</th><th>RUT</th><th>${cfg.personLabel}</th><th>Folio</th><th>Fecha</th><th class="num">Monto</th><th>Estado</th><th>Fecha resolución</th></tr></thead>
+        <tbody>${rows.map(i=>`<tr><td>${escapeHtml(i.tipo_doc||'—')}</td><td class="mono">${escapeHtml(i.rut||'—')}</td><td>${escapeHtml(i.razon_social||'—')}</td>
+          <td class="mono">${escapeHtml(i.folio||'—')}</td><td class="mono">${i.fecha||'—'}</td><td class="num">${formatCLP(i.monto)}</td>
+          <td><span class="badge ${i.estado}">${estadoLabel(i.estado)}</span></td><td class="mono">${i.pago_fecha||''}</td></tr>`).join('')}</tbody>
+      </table></div>` : `<div class="empty"><b>Sin datos</b>Aún no se han cargado documentos en este libro.</div>`}
+    </div>`;
+}
+function renderReporteFondos(){
+  const totalEntregado = cache.fondos.reduce((s,f)=>s+f.monto_entregado,0);
+  let totalRendido = 0;
+  cache.fondos.forEach(f=>{ totalRendido += (cache.gastosByFondo[f.id]||[]).reduce((s,g)=>s+g.monto,0); });
+  return `
+    <div class="card">
+      <h2>Fondos por Rendir</h2>
+      <div class="sub">Cliente: ${escapeHtml(session.clientName)}</div>
+      <div class="stat-row">
+        <div class="stat"><div class="lbl">Fondos activos</div><div class="val">${cache.fondos.length}</div></div>
+        <div class="stat"><div class="lbl">Total entregado</div><div class="val">${formatCLP(totalEntregado)}</div></div>
+        <div class="stat ok"><div class="lbl">Total rendido</div><div class="val">${formatCLP(totalRendido)}</div></div>
+        <div class="stat ${totalEntregado-totalRendido<0?'bad':'pend'}"><div class="lbl">Saldo global</div><div class="val">${formatCLP(totalEntregado-totalRendido)}</div></div>
+      </div>
+      <div class="actions-bar no-print"><button class="btn" onclick="exportExcelFondos()">Exportar a Excel</button><button class="btn" onclick="printOnly('fondos')">Imprimir / PDF</button></div>
+      ${cache.fondos.length ? cache.fondos.map(f=>renderFondoCard(f)).join('') : `<div class="empty"><b>Sin fondos registrados</b></div>`}
+    </div>`;
+}
+function exportExcel(libro){
+  const cfg = LIBROS[libro];
+  const rows = cache[libro].invoices.map(i=>({ Tipo:i.tipo_doc, RUT:i.rut, [cfg.personLabel]:i.razon_social, Folio:i.folio, Fecha:i.fecha, Monto:i.monto, Estado:estadoLabel(i.estado), 'Fecha resolución':i.pago_fecha||'' }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, cfg.label+'s');
+  const name = (session.clientName||'reporte').replace(/[^a-z0-9]+/gi,'_');
+  XLSX.writeFile(wb, `${name}_${libro}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+function exportExcelFondos(){
+  const rows = [];
+  cache.fondos.forEach(f=>{
+    const gastos = cache.gastosByFondo[f.id]||[];
+    if (!gastos.length){ rows.push({ Rendidor:f.rendidor, 'Fecha entrega':f.fecha_entrega, 'Monto entregado':f.monto_entregado, Motivo:f.motivo, 'Fecha gasto':'', Categoria:'', 'Monto gasto':'', Glosa:'', Documento:'' }); }
+    gastos.forEach(g=>{ rows.push({ Rendidor:f.rendidor, 'Fecha entrega':f.fecha_entrega, 'Monto entregado':f.monto_entregado, Motivo:f.motivo, 'Fecha gasto':g.fecha, Categoria:g.categoria, 'Monto gasto':g.monto, Glosa:g.glosa, Documento:g.documento_url||'' }); });
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Fondos por rendir');
+  const name = (session.clientName||'reporte').replace(/[^a-z0-9]+/gi,'_');
+  XLSX.writeFile(wb, `${name}_fondos_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+</script>
+</body>
+</html>
