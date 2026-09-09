@@ -11,14 +11,16 @@ jobs:
     steps:
       - name: Ping Control Contabilidad
         run: |
-          curl -s -o /dev/null -w "Control Contabilidad -> HTTP status: %{http_code}\n" \
+          curl -s --retry 3 --retry-delay 5 --connect-timeout 10 -o /dev/null \
+            -w "Control Contabilidad -> HTTP status: %{http_code}\n" \
             "https://einewayxqklnzpgephvi.supabase.co/rest/v1/clients?select=id&limit=1" \
             -H "apikey: sb_publishable_KzYozkWUpBKVawJv2rM-0w_hd5X00Wm" \
             -H "Authorization: Bearer sb_publishable_KzYozkWUpBKVawJv2rM-0w_hd5X00Wm"
 
       - name: Ping Control RRHH
         run: |
-          curl -s -o /dev/null -w "Control RRHH -> HTTP status: %{http_code}\n" \
+          curl -s --retry 3 --retry-delay 5 --connect-timeout 10 -o /dev/null \
+            -w "Control RRHH -> HTTP status: %{http_code}\n" \
             "https://hhvksrlcmazvqhnyfisc.supabase.co/rest/v1/" \
             -H "apikey: sb_publishable_Wt7oWsvaB7G2MLELaSDEEw_sHUrg91X" \
             -H "Authorization: Bearer sb_publishable_Wt7oWsvaB7G2MLELaSDEEw_sHUrg91X"
