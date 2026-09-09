@@ -1,0 +1,24 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    - cron: '0 12 */3 * *'   # cada 3 días a las 12:00 UTC
+  workflow_dispatch:          # permite ejecutarlo manualmente desde la pestaña Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Control Contabilidad
+        run: |
+          curl -s -o /dev/null -w "Control Contabilidad -> HTTP status: %{http_code}\n" \
+            "https://einewayxqklnzpgephvi.supabase.co/rest/v1/clients?select=id&limit=1" \
+            -H "apikey: sb_publishable_KzYozkWUpBKVawJv2rM-0w_hd5X00Wm" \
+            -H "Authorization: Bearer sb_publishable_KzYozkWUpBKVawJv2rM-0w_hd5X00Wm"
+
+      - name: Ping Control RRHH
+        run: |
+          curl -s -o /dev/null -w "Control RRHH -> HTTP status: %{http_code}\n" \
+            "https://hhvksrlcmazvqhnyfisc.supabase.co/rest/v1/" \
+            -H "apikey: sb_publishable_Wt7oWsvaB7G2MLELaSDEEw_sHUrg91X" \
+            -H "Authorization: Bearer sb_publishable_Wt7oWsvaB7G2MLELaSDEEw_sHUrg91X"
